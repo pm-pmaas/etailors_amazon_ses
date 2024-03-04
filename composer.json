@@ -1,0 +1,37 @@
+{
+    "name": "e-tailors/amazonses-plugin",
+    "description": "Amazon SES Mailer Plugin for Mautic",
+    "type": "mautic-plugin",
+    "license": "GPL-3.0-or-later",
+    "keywords": [
+        "mautic",
+        "plugin",
+        "integration"
+    ],
+    "extra": {
+        "install-directory-name": "AmazonSesBundle"
+    },
+    "minimum-stability": "dev",
+    "require": {
+        "php": ">=8.0.0",
+        "mautic/core-lib": "^5.0",
+        "aws/aws-sdk-php": "~3.0"
+    },
+    "scripts": {
+        "test": [
+            "@phpunit",
+            "@csfixer"
+        ],
+        "quicktest": [
+            "@unit",
+            "@csfixer"
+        ],
+        "phpunit": "../../bin/phpunit -d --bootstrap ../../vendor/autoload.php --configuration phpunit.xml --fail-on-warning --testsuite=all",
+        "unit": "../../bin/phpunit -d --bootstrap ../../vendor/autoload.php --configuration phpunit.xml --fail-on-warning --testsuite=unit",
+        "functional": "../../bin/phpunit -d --bootstrap ../../vendor/autoload.php --configuration phpunit.xml --fail-on-warning --testsuite=functional",
+        "coverage": "../../bin/phpunit -d --bootstrap ../../vendor/autoload.php --configuration phpunit.xml --fail-on-warning --testsuite=all --coverage-text --coverage-html=Tests/Coverage",
+        "csfixer": "../../bin/php-cs-fixer fix . -v --dry-run --diff --using-cache=no --config=../../.php-cs-fixer.php",
+        "fixcs": "../../bin/php-cs-fixer fix . -v --using-cache=no --config=../../.php-cs-fixer.php",
+        "phpstan": "[ ! -f ../../var/cache/test/AppKernelTestDebugContainer.xml ] && (echo 'Building test cache ...'; APP_ENV=test APP_DEBUG=1 ../../bin/console > /dev/null 2>&1); php -d memory_limit=4G ../../bin/phpstan analyse ."
+    }
+}
