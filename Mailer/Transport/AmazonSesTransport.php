@@ -12,88 +12,67 @@ use Aws\Ses\Exception\SesException;
 use Aws\SesV2\SesV2Client;
 use Mautic\EmailBundle\Helper\MailHelper;
 use Mautic\EmailBundle\Mailer\Message\MauticMessage;
-use Mautic\EmailBundle\Mailer\Transport\TokenTransportInterface;
 use Mautic\EmailBundle\Mailer\Transport\TokenTransportTrait;
-use Mautic\EmailBundle\Model\TransportCallback;
-use Mautic\LeadBundle\Entity\DoNotContact;
 use Psr\EventDispatcher\EventDispatcherInterface;
 use Psr\Log\LoggerInterface;
-use Symfony\Component\HttpFoundation\Request;
-use Symfony\Component\Mailer\Envelope;
-use Symfony\Component\Mailer\Event\MessageEvent;
-use Symfony\Component\Mailer\Exception\HttpTransportException;
 use Symfony\Component\Mailer\Exception\TransportException;
 use Symfony\Component\Mailer\Header\MetadataHeader;
 use Symfony\Component\Mailer\SentMessage;
-use Symfony\Component\Mailer\Transport\AbstractApiTransport;
 use Symfony\Component\Mailer\Transport\AbstractTransport;
 use Symfony\Component\Mime\Address;
 use Symfony\Component\Mime\Email;
-use Symfony\Component\Mime\Header\ParameterizedHeader;
-use Symfony\Component\Mime\Header\UnstructuredHeader;
-use Symfony\Component\Mime\RawMessage;
-use Symfony\Contracts\HttpClient\Exception\ClientExceptionInterface;
-use Symfony\Contracts\HttpClient\Exception\DecodingExceptionInterface;
-use Symfony\Contracts\HttpClient\Exception\RedirectionExceptionInterface;
-use Symfony\Contracts\HttpClient\Exception\ServerExceptionInterface;
-use Symfony\Contracts\HttpClient\Exception\TransportExceptionInterface;
-use Symfony\Contracts\HttpClient\HttpClientInterface;
-use Symfony\Contracts\HttpClient\ResponseInterface;
 
-
-class AmazonSesTransport  extends AbstractTransport
+class AmazonSesTransport extends AbstractTransport
 {
     use TokenTransportTrait;
 
-    const MAUTIC_AMAZONSES_API_SCHEME = 'mautic+ses+api';
+    public const MAUTIC_AMAZONSES_API_SCHEME = 'mautic+ses+api';
 
-    const AMAZON_REGION = [
-        'us-east-1'         =>  'us-east-1',
-        'us-east-2'         =>  'us-west-2',
-        'ap-south-1'        =>  'ap-south-1',
-        'ap-northeast-2'    =>  'ap-northeast-2',
-        'ap-southeast-1'    =>  'ap-southeast-1',
-        'ap-southeast-2'    =>  'ap-southeast-2',
-        'ap-northeast-1'    =>  'ap-northeast-1',
-        'ca-central-1'      =>  'ca-central-1',
-        'eu-central-1'      =>  'eu-central-1',
-        'eu-west-1'         =>  'eu-west-1',
-        'eu-west-2'         =>  'eu-west-2',
-        'sa-east-1'         =>  'sa-east-1',
-        'us-gov-west-1'     =>  'us-gov-west-1'
+    public const AMAZON_REGION = [
+        'us-east-1'      => 'us-east-1',
+        'us-east-2'      => 'us-west-2',
+        'ap-south-1'     => 'ap-south-1',
+        'ap-northeast-2' => 'ap-northeast-2',
+        'ap-southeast-1' => 'ap-southeast-1',
+        'ap-southeast-2' => 'ap-southeast-2',
+        'ap-northeast-1' => 'ap-northeast-1',
+        'ca-central-1'   => 'ca-central-1',
+        'eu-central-1'   => 'eu-central-1',
+        'eu-west-1'      => 'eu-west-1',
+        'eu-west-2'      => 'eu-west-2',
+        'sa-east-1'      => 'sa-east-1',
+        'us-gov-west-1'  => 'us-gov-west-1',
     ];
 
-
-     const STD_HEADER_KEYS = [
-        'MIME-Version',
-        'received',
-        'dkim-signature',
-        'Content-Type',
-        'Content-Transfer-Encoding',
-        'To',
-        'From',
-        'Subject',
-        'Reply-To',
-        'CC',
-        'BCC',
+    public const STD_HEADER_KEYS = [
+       'MIME-Version',
+       'received',
+       'dkim-signature',
+       'Content-Type',
+       'Content-Transfer-Encoding',
+       'To',
+       'From',
+       'Subject',
+       'Reply-To',
+       'CC',
+       'BCC',
     ];
 
     private $enableTemplate;
 
     public function __construct(
-        // TransportCallback $callback,
-         SesV2Client $amazonclient,
-         EventDispatcherInterface $dispatcher = null,
-         LoggerInterface $logger = null,
-         $settings = []
+        SesV2Client $amazonclient,
+        ?EventDispatcherInterface $dispatcher = null,
+        ?LoggerInterface $logger = null,
+        $settings = []
     ) {
         parent::__construct($dispatcher, $logger);
-        $this->logger  = $logger;
-        $this->client  = $amazonclient;
+        $this->logger     = $logger;
+        $this->client     = $amazonclient;
         $this->dispatcher = $dispatcher;
-        $this->settings = $settings;
+        $this->settings   = $settings;
 
-        /**
+        /*
          * Since symfony/mailer is transactional by default, we need to set the max send rate to 1
          * to avoid sending multiple emails at once.
          * We are getting tokinzed emails, so there will be MaxSendRate emails per call
@@ -101,10 +80,7 @@ class AmazonSesTransport  extends AbstractTransport
          * This transport SHOULD NOT RUN IN PARALLEL.
          */
         $this->setMaxPerSecond(1);
-
     }
-
-
 
     public function __toString(): string
     {
@@ -115,12 +91,9 @@ class AmazonSesTransport  extends AbstractTransport
         }
 
         $parameters = http_build_query(['region' => $this->client->getRegion()]);
+
         return sprintf('mautic+ses+api://%s@%s', $credentials->getAccessKeyId(), $parameters);
     }
-
-
-
-
 
     protected function doSend(SentMessage $message): void
     {
@@ -147,17 +120,17 @@ class AmazonSesTransport  extends AbstractTransport
             * SES does not support sending attachments as bulk emails
             */
             if ($email->getAttachments() || !$this->enableTemplate) {
-                $commands      = [];
+                $commands = [];
                 foreach ($this->convertMessageToRawPayload() as $payload) {
                     $commands[] = $this->client->getCommand('sendEmail', $payload);
                 }
 
-                $pool     = new CommandPool($this->client, $commands, [
+                $pool = new CommandPool($this->client, $commands, [
                     'concurrency' => $this->settings['maxSendRate'],
                     'fulfilled'   => function (Result $result, $iteratorId) {
                     },
                     'rejected' => function (AwsException $reason, $iteratorId) use ($commands, &$failures) {
-                        $data = $commands[$iteratorId]->toArray();
+                        $data   = $commands[$iteratorId]->toArray();
                         $failed = Address::create($data['Destination']['ToAddresses'][0]);
                         array_push($failures, $failed->getAddress());
                         $this->logger->debug('Rejected: message to '.implode(',', $data['Destination']['ToAddresses']).' with reason '.$reason->getMessage());
@@ -168,10 +141,10 @@ class AmazonSesTransport  extends AbstractTransport
             } else {
                 [$template, $payload] = $this->makeTemplateAndMessagePayload();
                 $this->createSesTemplate($template);
-                $results  = $this->client->sendBulkEmail($payload)->toArray();
+                $results = $this->client->sendBulkEmail($payload)->toArray();
                 foreach ($results['BulkEmailEntryResults'] as $i => $result) {
                     if ('SUCCESS' != $result['Status']) {
-                        //Save the position of the response, it should match the position of the email in the payload
+                        // Save the position of the response, it should match the position of the email in the payload
                         $failures[] = $i;
                     }
                 }
@@ -184,11 +157,9 @@ class AmazonSesTransport  extends AbstractTransport
             throw new TransportException(sprintf('Unable to send an email: %s (code %s).', $message, $code));
         } catch (\Exception $exception) {
             $this->logger->info($exception);
-            throw new TransportException(sprintf('Unable to send an email: %s .', $exception->getMessage(),$exception->getCode()));
+            throw new TransportException(sprintf('Unable to send an email: %s .', $exception->getMessage(), $exception->getCode()));
         }
     }
-
-
 
     /**
      * Convert MauticMessage to JSON payload that works with RAW sends.
@@ -199,9 +170,9 @@ class AmazonSesTransport  extends AbstractTransport
     {
         $metadata = $this->getMetadata();
 
-        $payload       = [];
+        $payload = [];
         if (empty($metadata)) {
-            $sentMessage   = clone $this->message;
+            $sentMessage = clone $this->message;
             $this->logger->debug('No metadata found, sending email as raw');
             $this->addSesHeaders($payload, $sentMessage);
             $payload = [
@@ -227,13 +198,13 @@ class AmazonSesTransport  extends AbstractTransport
             $tokens       = (!empty($metadataSet['tokens'])) ? $metadataSet['tokens'] : [];
             $mauticTokens = array_keys($tokens);
             foreach ($metadata as $recipient => $mailData) {
-                $sentMessage   = clone $this->message;
+                $sentMessage = clone $this->message;
                 $sentMessage->clearMetadata();
                 $sentMessage->updateLeadIdHash($mailData['hashId']);
                 $sentMessage->to(new Address($recipient, $mailData['name'] ?? ''));
                 MailHelper::searchReplaceTokens($mauticTokens, $mailData['tokens'], $sentMessage);
                 $this->addSesHeaders($payload, $sentMessage);
-                $payload['Destination']      = [
+                $payload['Destination'] = [
                     'ToAddresses'  => $this->stringifyAddresses($sentMessage->getTo()),
                     'CcAddresses'  => $this->stringifyAddresses($sentMessage->getCc()),
                     'BccAddresses' => $this->stringifyAddresses($sentMessage->getBcc()),
@@ -258,7 +229,7 @@ class AmazonSesTransport  extends AbstractTransport
     private function addSesHeaders(&$payload, MauticMessage &$sentMessage): void
     {
         $payload['FromEmailAddress'] = $sentMessage->getFrom()[0]->getAddress();
-        $payload['ReplyToAddresses'] =  $this->stringifyAddresses($sentMessage->getReplyTo());
+        $payload['ReplyToAddresses'] = $this->stringifyAddresses($sentMessage->getReplyTo());
 
         foreach ($sentMessage->getHeaders()->all() as $header) {
             if ($header instanceof MetadataHeader) {
@@ -277,10 +248,10 @@ class AmazonSesTransport  extends AbstractTransport
                         $payload['FromEmailAddressIdentityArn'] = $header->getBodyAsString();
                         $sentMessage->getHeaders()->remove($header->getName());
                         break;
-                    /**
-                     * https://docs.aws.amazon.com/aws-sdk-php/v3/api/api-sesv2-2019-09-27.html#sendemail
-                     * ListManagementOptions is stopped intentionally because Mautic is managing this.
-                     */
+                        /*
+                         * https://docs.aws.amazon.com/aws-sdk-php/v3/api/api-sesv2-2019-09-27.html#sendemail
+                         * ListManagementOptions is stopped intentionally because Mautic is managing this.
+                         */
                     case 'X-SES-CONFIGURATION-SET':
                         $payload['ConfigurationSetName'] = $header->getBodyAsString();
                         $sentMessage->getHeaders()->remove($header->getName());
@@ -298,16 +269,16 @@ class AmazonSesTransport  extends AbstractTransport
         if (empty($failures)) {
             return;
         }
-        //Make a copy of the metadata
+        // Make a copy of the metadata
         $metadata = $this->getMetadata();
         $keys     = array_keys($metadata);
 
-        //Clear the metadata
+        // Clear the metadata
         $this->message->clearMetadata();
 
-        //Add the metadata for the failed recipients
+        // Add the metadata for the failed recipients
 
-        if(!empty($metadata)){
+        if (!empty($metadata)) {
             foreach ($failures as $failure) {
                 if (is_int($failure)) {
                     $this->message->addMetadata($keys[$failure], $metadata[$keys[$failure]]);
@@ -317,7 +288,6 @@ class AmazonSesTransport  extends AbstractTransport
             }
         }
 
-
         $this->logger->debug('There are partial failures, replacing metadata, and failing the message');
         /*
             The message that failed will be retried with only the failed recipients
@@ -326,7 +296,6 @@ class AmazonSesTransport  extends AbstractTransport
 
         throw new \Exception('There are  '.count($failures).' partial failures, check logs for exception reasons');
     }
-
 
     public function getMetadata()
     {
@@ -342,6 +311,4 @@ class AmazonSesTransport  extends AbstractTransport
     {
         return 5000;
     }
-
-
 }

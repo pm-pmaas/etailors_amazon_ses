@@ -10,29 +10,27 @@ use Mautic\EmailBundle\Event\TransportWebhookEvent;
 use Mautic\EmailBundle\Model\TransportCallback;
 use Mautic\LeadBundle\Entity\DoNotContact;
 use MauticPlugin\AmazonSesBundle\Mailer\Transport\AmazonSesTransport;
+use Psr\Log\LoggerInterface;
 use Symfony\Component\EventDispatcher\EventSubscriberInterface;
 use Symfony\Component\HttpFoundation\Response;
-use Symfony\Component\Mailer\Transport\Dsn;
-use Psr\Log\LoggerInterface;
 use Symfony\Component\HttpKernel\Exception\HttpException;
+use Symfony\Component\Mailer\Transport\Dsn;
 use Symfony\Contracts\HttpClient\HttpClientInterface;
 use Symfony\Contracts\Translation\TranslatorInterface;
 
 class CallbackSubscriber implements EventSubscriberInterface
 {
-
     private static TranslatorInterface $translator;
 
-
     public function __construct(
-        private TransportCallback    $transportCallback,
+        private TransportCallback $transportCallback,
         private CoreParametersHelper $coreParametersHelper,
         private HttpClientInterface $client,
-        LoggerInterface              $logger = null,
+        ?LoggerInterface $logger = null,
         TranslatorInterface $translator,
     ) {
         self::$translator = $translator;
-        $this->logger  = $logger;
+        $this->logger     = $logger;
     }
 
     /**
@@ -44,7 +42,6 @@ class CallbackSubscriber implements EventSubscriberInterface
             EmailEvents::ON_TRANSPORT_WEBHOOK => 'processCallbackRequest',
         ];
     }
-
 
     public function processCallbackRequest(TransportWebhookEvent $event): void
     {
@@ -69,7 +66,6 @@ class CallbackSubscriber implements EventSubscriberInterface
         $this->processJsonPayload($payload, $type);
         $event->setResponse(new Response('Callback processed'));
     }
-
 
     /**
      * Process json request from Amazon SES.
@@ -110,32 +106,32 @@ class CallbackSubscriber implements EventSubscriberInterface
                         // http://docs.aws.amazon.com/ses/latest/DeveloperGuide/notification-contents.html#complaint-object
                         switch ($payload['complaint']['complaintFeedbackType']) {
                             case 'abuse':
-                                $reason = self::$translator->trans('mautic.amazonses.plugin.complaint.reason.abuse',[],'validators');
+                                $reason = self::$translator->trans('mautic.amazonses.plugin.complaint.reason.abuse', [], 'validators');
                                 break;
                             case 'auth-failure':
-                                $reason = self::$translator->trans('mautic.amazonses.plugin.complaint.reason.auth_failure',[],'validators');
+                                $reason = self::$translator->trans('mautic.amazonses.plugin.complaint.reason.auth_failure', [], 'validators');
                                 break;
                             case 'fraud':
-                                $reason = self::$translator->trans('mautic.amazonses.plugin.complaint.reason.fraud',[],'validators');
+                                $reason = self::$translator->trans('mautic.amazonses.plugin.complaint.reason.fraud', [], 'validators');
                                 break;
                             case 'not-spam':
-                                $reason = self::$translator->trans('mautic.amazonses.plugin.complaint.reason.not_spam',[],'validators');
+                                $reason = self::$translator->trans('mautic.amazonses.plugin.complaint.reason.not_spam', [], 'validators');
                                 break;
                             case 'other':
-                                $reason = self::$translator->trans('mautic.amazonses.plugin.complaint.reason.other',[],'validators');
+                                $reason = self::$translator->trans('mautic.amazonses.plugin.complaint.reason.other', [], 'validators');
                                 break;
                             case 'virus':
-                                $reason = self::$translator->trans('mautic.amazonses.plugin.complaint.reason.virus',[],'validators');
+                                $reason = self::$translator->trans('mautic.amazonses.plugin.complaint.reason.virus', [], 'validators');
                                 break;
                             default:
-                                $reason = self::$translator->trans('mautic.amazonses.plugin.complaint.reason.unknown',[],'validators');
+                                $reason = self::$translator->trans('mautic.amazonses.plugin.complaint.reason.unknown', [], 'validators');
                                 break;
                         }
                     }
 
                     if (null === $reason) {
                         if (empty($payload['complaint']['complaintSubType'])) {
-                            $reason = self::$translator->trans('mautic.amazonses.plugin.complaint.reason.unknown',[],'validators');
+                            $reason = self::$translator->trans('mautic.amazonses.plugin.complaint.reason.unknown', [], 'validators');
                         } else {
                             $reason = $payload['complaint']['complaintSubType'];
                         }
@@ -171,7 +167,7 @@ class CallbackSubscriber implements EventSubscriberInterface
                     // Get bounced recipients in an array
                     $bouncedRecipients = $payload['bounce']['bouncedRecipients'];
                     foreach ($bouncedRecipients as $bouncedRecipient) {
-                        $bounceCode =  array_key_exists('diagnosticCode', $bouncedRecipient) ? $bouncedRecipient['diagnosticCode'] : 'unknown';
+                        $bounceCode = array_key_exists('diagnosticCode', $bouncedRecipient) ? $bouncedRecipient['diagnosticCode'] : 'unknown';
                         $bounceCode .= ' AWS bounce type: '.$payload['bounce']['bounceType'].' bounce subtype:'.$payload['bounce']['bounceSubType'];
                         $this->transportCallback->addFailureByAddress($bouncedRecipient['emailAddress'], $bounceCode, DoNotContact::BOUNCED, $emailId);
                         $this->logger->debug("Mark email '".$bouncedRecipient['emailAddress']."' as bounced, reason: ".$bounceCode);
@@ -184,6 +180,4 @@ class CallbackSubscriber implements EventSubscriberInterface
                 throw new HttpException(400, "Received SES webhook of type '$payload[Type]' but couldn't understand payload");
         }
     }
-
-
 }
