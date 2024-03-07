@@ -1,4 +1,10 @@
 <?php
+/*
+ * @copyright       (c) 2024. e-tailors IP B.V. All rights reserverd
+ * @author          Paul Maas <p.maas@e-tailors.com>
+ *
+ * @link            https://www.e-tailors.com
+ */
 
 declare(strict_types=1);
 
@@ -26,8 +32,14 @@ class AmazonSesTransport extends AbstractTransport
 {
     use TokenTransportTrait;
 
+    /**
+     * DSN constant.
+     */
     public const MAUTIC_AMAZONSES_API_SCHEME = 'mautic+ses+api';
 
+    /**
+     * Amazon region constants.
+     */
     public const AMAZON_REGION = [
         'us-east-1'      => 'us-east-1',
         'us-east-2'      => 'us-west-2',
@@ -44,6 +56,9 @@ class AmazonSesTransport extends AbstractTransport
         'us-gov-west-1'  => 'us-gov-west-1',
     ];
 
+    /**
+     *  Header key contstants.
+     */
     public const STD_HEADER_KEYS = [
        'MIME-Version',
        'received',
@@ -97,6 +112,8 @@ class AmazonSesTransport extends AbstractTransport
 
     protected function doSend(SentMessage $message): void
     {
+        $this->logger->debug('inDosendfunction');
+
         try {
             /*
             * Get the original email message.
@@ -120,6 +137,9 @@ class AmazonSesTransport extends AbstractTransport
             * SES does not support sending attachments as bulk emails
             */
             if ($email->getAttachments() || !$this->enableTemplate) {
+                $this->logger->debug('attachments OR NOT template');
+                $this->logger->debug('sendrate:'.$this->settings['maxSendRate']);
+
                 $commands = [];
                 foreach ($this->convertMessageToRawPayload() as $payload) {
                     $commands[] = $this->client->getCommand('sendEmail', $payload);
@@ -139,6 +159,8 @@ class AmazonSesTransport extends AbstractTransport
                 $promise = $pool->promise();
                 $promise->wait();
             } else {
+                $this->logger->debug('template mail');
+
                 [$template, $payload] = $this->makeTemplateAndMessagePayload();
                 $this->createSesTemplate($template);
                 $results = $this->client->sendBulkEmail($payload)->toArray();
@@ -266,6 +288,9 @@ class AmazonSesTransport extends AbstractTransport
      */
     private function processFailures(array $failures): void
     {
+        $this->logger->debug('proces failures:');
+        $this->logger->debug(json_encode($failures));
+
         if (empty($failures)) {
             return;
         }
@@ -297,6 +322,9 @@ class AmazonSesTransport extends AbstractTransport
         throw new \Exception('There are  '.count($failures).' partial failures, check logs for exception reasons');
     }
 
+    /**
+     * @return array|\string[][]
+     */
     public function getMetadata()
     {
         return ($this->message instanceof MauticMessage) ? $this->message->getMetadata() : [];

@@ -1,4 +1,10 @@
 <?php
+/*
+ * @copyright       (c) 2024. e-tailors IP B.V. All rights reserverd
+ * @author          Paul Maas <p.maas@e-tailors.com>
+ *
+ * @link            https://www.e-tailors.com
+ */
 
 declare(strict_types=1);
 
@@ -19,11 +25,27 @@ use Symfony\Component\Mailer\Transport\Dsn;
 use Symfony\Component\Mailer\Transport\TransportInterface;
 use Symfony\Contracts\Translation\TranslatorInterface;
 
+/**
+ *
+ */
 class AmazonSesTransportFactory extends AbstractTransportFactory
 {
+    /**
+     * @var SesV2Client
+     */
     private static SesV2Client $amazonclient;
+    /**
+     * @var TranslatorInterface
+     */
     private static TranslatorInterface $translator;
 
+    /**
+     * @param TransportCallback $transportCallback
+     * @param EventDispatcherInterface $eventDispatcher
+     * @param TranslatorInterface $translator
+     * @param LoggerInterface|null $logger
+     * @param SesV2Client|null $amazonclient
+     */
     public function __construct(
         TransportCallback $transportCallback,
         EventDispatcherInterface $eventDispatcher,
@@ -43,6 +65,10 @@ class AmazonSesTransportFactory extends AbstractTransportFactory
         return [AmazonSesTransport::MAUTIC_AMAZONSES_API_SCHEME];
     }
 
+    /**
+     * @param Dsn $dsn
+     * @return TransportInterface
+     */
     public function create(Dsn $dsn): TransportInterface
     {
         if (AmazonSesTransport::MAUTIC_AMAZONSES_API_SCHEME === $dsn->getScheme()) {
@@ -64,6 +90,9 @@ class AmazonSesTransportFactory extends AbstractTransportFactory
         throw new UnsupportedSchemeException($dsn, 'Amazon SES', $this->getSupportedSchemes());
     }
 
+    /**
+     * @return SesV2Client
+     */
     public static function getAmazonClient(): SesV2Client
     {
         if (!isset(self::$amazonclient)) {
@@ -74,6 +103,11 @@ class AmazonSesTransportFactory extends AbstractTransportFactory
         return self::$amazonclient;
     }
 
+    /**
+     * @param Dsn $dsn
+     * @param \Countable|null $handler
+     * @return void
+     */
     public static function initAmazonClient(Dsn $dsn, ?\Countable $handler = null): void
     {
         $dsn_user = $dsn->getUser();

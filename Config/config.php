@@ -1,4 +1,10 @@
 <?php
+/*
+ * @copyright       (c) 2024. e-tailors IP B.V. All rights reserverd
+ * @author          Paul Maas <p.maas@e-tailors.com>
+ *
+ * @link            https://www.e-tailors.com
+ */
 
 declare(strict_types=1);
 
