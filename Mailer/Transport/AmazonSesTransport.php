@@ -18,6 +18,7 @@ use Aws\Ses\Exception\SesException;
 use Aws\SesV2\SesV2Client;
 use Mautic\EmailBundle\Helper\MailHelper;
 use Mautic\EmailBundle\Mailer\Message\MauticMessage;
+use Mautic\EmailBundle\Mailer\Transport\TokenTransportInterface;
 use Mautic\EmailBundle\Mailer\Transport\TokenTransportTrait;
 use Psr\EventDispatcher\EventDispatcherInterface;
 use Psr\Log\LoggerInterface;
@@ -28,7 +29,7 @@ use Symfony\Component\Mailer\Transport\AbstractTransport;
 use Symfony\Component\Mime\Address;
 use Symfony\Component\Mime\Email;
 
-class AmazonSesTransport extends AbstractTransport
+class AmazonSesTransport extends AbstractTransport implements TokenTransportInterface
 {
     use TokenTransportTrait;
 
@@ -115,9 +116,7 @@ class AmazonSesTransport extends AbstractTransport
         $this->logger->debug('inDosendfunction');
 
         try {
-            /*
-            * Get the original email message.
-            */
+
             $email = $message->getOriginalMessage();
             if (!$email instanceof MauticMessage) {
                 throw new \Exception('Message must be an instance of '.MauticMessage::class);
@@ -125,11 +124,6 @@ class AmazonSesTransport extends AbstractTransport
 
             $this->message = $email;
 
-            /**
-             * This array will be used to replace
-             * metadata in the current message
-             * in case there are failures.
-             */
             $failures = [];
 
             /*
@@ -158,18 +152,6 @@ class AmazonSesTransport extends AbstractTransport
                 ]);
                 $promise = $pool->promise();
                 $promise->wait();
-            } else {
-                $this->logger->debug('template mail');
-
-                [$template, $payload] = $this->makeTemplateAndMessagePayload();
-                $this->createSesTemplate($template);
-                $results = $this->client->sendBulkEmail($payload)->toArray();
-                foreach ($results['BulkEmailEntryResults'] as $i => $result) {
-                    if ('SUCCESS' != $result['Status']) {
-                        // Save the position of the response, it should match the position of the email in the payload
-                        $failures[] = $i;
-                    }
-                }
             }
             // todo queue mode enabled
             $this->processFailures($failures);
