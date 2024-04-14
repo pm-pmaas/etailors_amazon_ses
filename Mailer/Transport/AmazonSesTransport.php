@@ -232,7 +232,12 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
      */
     private function addSesHeaders(&$payload, MauticMessage &$sentMessage): void
     {
-        $payload['FromEmailAddress'] = $sentMessage->getFrom()[0]->getAddress();
+        $fromAddress = $sentMessage->getFrom()[0];
+        $name = trim($fromAddress->getName());
+        $payload['FromEmailAddress'] = $name !== ''
+            ? "$name <{$fromAddress->getAddress()}>"
+            : $fromAddress->getAddress();
+
         $payload['ReplyToAddresses'] = $this->stringifyAddresses($sentMessage->getReplyTo());
 
         foreach ($sentMessage->getHeaders()->all() as $header) {
