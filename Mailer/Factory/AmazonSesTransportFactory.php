@@ -116,6 +116,9 @@ class AmazonSesTransportFactory extends AbstractTransportFactory
         }
 
         $dsn_password = $dsn->getPassword();
+
+        $dsn_password = self::sanitizePassword($dsn_password);
+
         if (null === $dsn_password) {
             throw new IncompleteDsnException(self::$translator->trans('mautic.amazonses.plugin.password.empty', [], 'validators'));
         }
@@ -149,5 +152,24 @@ class AmazonSesTransportFactory extends AbstractTransportFactory
              */
             self::$amazonclient = new SesV2Client($config);
         }
+    }
+
+    /**
+     * Sanitize the password by stripping out unwanted characters like HTML icons.
+     *
+     * @param string $password
+     * @return string
+     */
+    private static function sanitizePassword(string $password): string
+    {
+        // Strip HTML tags and any encoded entities.
+        $cleanPassword = strip_tags($password);
+
+        // Optionally, remove other unwanted characters, e.g., non-printable ASCII.
+        // This regular expression will strip any non-ASCII characters.
+        $cleanPassword = preg_replace('/[^\x20-\x7E]/', '', $cleanPassword);
+
+        // Trim extra spaces that might get inserted accidentally.
+        return trim($cleanPassword);
     }
 }
