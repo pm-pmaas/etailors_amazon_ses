@@ -105,7 +105,7 @@ To receive feedback from Amazon SES regarding bounces and complaints, you need t
 - To debug or troubleshoot any issues with email sending or SNS feedback processing, check Mautic's logs at:
   
   ```
-  /path/to/mautic/app/logs
+  /path/to/mautic/var/logs
   ```
 
 - You can also review the status of your emails and SNS callbacks within the **Amazon CloudWatch** service to monitor the performance of SES and SNS.
