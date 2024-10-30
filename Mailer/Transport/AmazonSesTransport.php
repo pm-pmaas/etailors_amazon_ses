@@ -325,6 +325,6 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
 
     public function getMaxBatchLimit(): int
     {
-        return 5000;
+        return 50;
     }
 }
