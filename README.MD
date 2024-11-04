@@ -100,6 +100,11 @@ To receive feedback from Amazon SES regarding bounces and complaints, you need t
 
 ---
 
+## Batch Limit
+
+Informed by: @mabumusa1 When you make the batch 5000 addresses, this will make most accounts break the API sending limit, I suggest you make it 50, so merged 
+this pull request ( https://github.com/pm-pmaas/etailors_amazon_ses/pull/8 ).
+
 ## Debugging
 
 - To debug or troubleshoot any issues with email sending or SNS feedback processing, check Mautic's logs at:
