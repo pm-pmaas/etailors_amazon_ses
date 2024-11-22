@@ -132,7 +132,7 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
             $this->message = $email;
 
             // Use centralized method for updating From address
-            $this->updateFromAddress($email);
+            $this->updateEmailFields($email);
 
             $failures = [];
 
@@ -192,7 +192,7 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
             $sentMessage = clone $this->message;
             $this->logger->debug('No metadata found, sending email as raw');
             // Update From Address dynamically
-            $this->updateFromAddress($sentMessage);
+            $this->updateEmailFields($sentMessage);
 
             $this->addSesHeaders($payload, $sentMessage);
             $payload = [
@@ -223,7 +223,7 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
                 $sentMessage->updateLeadIdHash($mailData['hashId']);
                 $sentMessage->to(new Address($recipient, $mailData['name'] ?? ''));
                 // Update From Address dynamically
-                $this->updateFromAddress($sentMessage);
+                $this->updateEmailFields($sentMessage);
                 MailHelper::searchReplaceTokens($mauticTokens, $mailData['tokens'], $sentMessage);
                 $this->addSesHeaders($payload, $sentMessage);
                 $payload['Destination'] = [
@@ -363,19 +363,29 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
      * @return void
      * @throws \Exception
      */
-    private function updateFromAddress(MauticMessage $email): void
+    private function updateEmailFields(MauticMessage $email): void
     {
         $emailId = $this->getEmailIdFromMetadata($email->getMetadata());
 
         if ($emailId !== null) {
             $emailEntity = $this->entityManager->getRepository(MauticEmailEntity::class)->find($emailId);
             if ($emailEntity) {
+                // Update From Address and Name
                 $customFromAddress = $emailEntity->getFromAddress();
                 $customFromName = $emailEntity->getFromName();
-
-                // Override only if custom From settings are available
                 if ($customFromAddress) {
                     $email->from(new Address($customFromAddress, $customFromName ?: ''));
+                }
+
+                // Add Custom Headers, checking for duplicates
+                $customHeaders = $emailEntity->getHeaders();
+                if (!empty($customHeaders)) {
+                    foreach ($customHeaders as $headerName => $headerValue) {
+                        // Check if the header already exists before adding it
+                        if (!$email->getHeaders()->has($headerName)) {
+                            $email->getHeaders()->addTextHeader($headerName, $headerValue);
+                        }
+                    }
                 }
             }
         }
