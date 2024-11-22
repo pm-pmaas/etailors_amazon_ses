@@ -28,6 +28,8 @@ use Symfony\Component\Mailer\SentMessage;
 use Symfony\Component\Mailer\Transport\AbstractTransport;
 use Symfony\Component\Mime\Address;
 use Symfony\Component\Mime\Email;
+use Mautic\EmailBundle\Entity\Email as MauticEmailEntity;
+use Doctrine\ORM\EntityManagerInterface;
 
 class AmazonSesTransport extends AbstractTransport implements TokenTransportInterface
 {
@@ -76,9 +78,11 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
     ];
 
     private $enableTemplate;
+    private $entityManager;
 
     public function __construct(
         SesV2Client $amazonclient,
+        EntityManagerInterface $entityManager,
         ?EventDispatcherInterface $dispatcher = null,
         ?LoggerInterface $logger = null,
         $settings = []
@@ -87,6 +91,7 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
         $this->logger     = $logger;
         $this->client     = $amazonclient;
         $this->dispatcher = $dispatcher;
+        $this->entityManager = $entityManager;
         $this->settings   = $settings;
 
         /*
@@ -117,23 +122,24 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
         $this->logger->debug('inDosendfunction');
 
         try {
-
             $email = $message->getOriginalMessage();
+
+            // Ensure the message is an instance of MauticMessage
             if (!$email instanceof MauticMessage) {
                 throw new \Exception('Message must be an instance of '.MauticMessage::class);
             }
 
             $this->message = $email;
 
+            // Use centralized method for updating From address
+            $this->updateEmailFields($email);
+
             $failures = [];
 
-            /*
-            * If there is an attachment, send mail using sendRawEmail method
-            * SES does not support sending attachments as bulk emails
-            */
+            // Handle attachment or non-template emails
             if ($email->getAttachments() || !$this->enableTemplate) {
                 $this->logger->debug('attachments OR NOT template');
-                $this->logger->debug('sendrate:'.$this->settings['maxSendRate']);
+                $this->logger->debug('sendrate:' . $this->settings['maxSendRate']);
 
                 $commands = [];
                 foreach ($this->convertMessageToRawPayload() as $payload) {
@@ -142,23 +148,29 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
 
                 $pool = new CommandPool($this->client, $commands, [
                     'concurrency' => $this->settings['maxSendRate'],
-                    'fulfilled'   => function (Result $result, $iteratorId) {
+                    'fulfilled' => function (Result $result, $iteratorId) {
+                        // Log fulfilled messages if necessary
                     },
                     'rejected' => function (AwsException $reason, $iteratorId) use ($commands, &$failures) {
-                        $data   = $commands[$iteratorId]->toArray();
+                        $data = $commands[$iteratorId]->toArray();
                         $failed = Address::create($data['Destination']['ToAddresses'][0]);
-                        array_push($failures, $failed->getAddress());
-                        $this->logger->debug('Rejected: message to '.implode(',', $data['Destination']['ToAddresses']).' with reason '.$reason->getMessage());
+                        $failures[] = $failed->getAddress();
+
+                        // Log detailed failure reasons
+                        $this->logger->error('Rejected: message to '.implode(',', $data['Destination']['ToAddresses']));
+                        $this->logger->error('AWS SES Error: '.$reason->getMessage());
+                        $this->logger->error('Payload: '.json_encode($data));
                     },
                 ]);
+
                 $promise = $pool->promise();
                 $promise->wait();
             }
-            // todo queue mode enabled
+
             $this->processFailures($failures);
         } catch (SesException $exception) {
             $message = $exception->getAwsErrorMessage() ?: $exception->getMessage();
-            $code    = $exception->getStatusCode() ?: $exception->getCode();
+            $code = $exception->getStatusCode() ?: $exception->getCode();
             throw new TransportException(sprintf('Unable to send an email: %s (code %s).', $message, $code));
         } catch (\Exception $exception) {
             $this->logger->info($exception);
@@ -179,6 +191,9 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
         if (empty($metadata)) {
             $sentMessage = clone $this->message;
             $this->logger->debug('No metadata found, sending email as raw');
+            // Update From Address dynamically
+            $this->updateEmailFields($sentMessage);
+
             $this->addSesHeaders($payload, $sentMessage);
             $payload = [
                 'Content' => [
@@ -207,6 +222,8 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
                 $sentMessage->clearMetadata();
                 $sentMessage->updateLeadIdHash($mailData['hashId']);
                 $sentMessage->to(new Address($recipient, $mailData['name'] ?? ''));
+                // Update From Address dynamically
+                $this->updateEmailFields($sentMessage);
                 MailHelper::searchReplaceTokens($mauticTokens, $mailData['tokens'], $sentMessage);
                 $this->addSesHeaders($payload, $sentMessage);
                 $payload['Destination'] = [
@@ -327,4 +344,51 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
     {
         return 50;
     }
+
+    private function getEmailIdFromMetadata(array $metadata): ?int
+    {
+        foreach ($metadata as $email => $details) {
+            if (isset($details['emailId'])) {
+                return (int) $details['emailId'];
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Dynamically sets the From Name and From Email based on email metadata or default settings.
+     *
+     * @param MauticMessage $email
+     * @return void
+     * @throws \Exception
+     */
+    private function updateEmailFields(MauticMessage $email): void
+    {
+        $emailId = $this->getEmailIdFromMetadata($email->getMetadata());
+
+        if ($emailId !== null) {
+            $emailEntity = $this->entityManager->getRepository(MauticEmailEntity::class)->find($emailId);
+            if ($emailEntity) {
+                // Update From Address and Name
+                $customFromAddress = $emailEntity->getFromAddress();
+                $customFromName = $emailEntity->getFromName();
+                if ($customFromAddress) {
+                    $email->from(new Address($customFromAddress, $customFromName ?: ''));
+                }
+
+                // Add Custom Headers, checking for duplicates
+                $customHeaders = $emailEntity->getHeaders();
+                if (!empty($customHeaders)) {
+                    foreach ($customHeaders as $headerName => $headerValue) {
+                        // Check if the header already exists before adding it
+                        if (!$email->getHeaders()->has($headerName)) {
+                            $email->getHeaders()->addTextHeader($headerName, $headerValue);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
 }
