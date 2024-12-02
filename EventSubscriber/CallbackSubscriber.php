@@ -211,7 +211,7 @@ class CallbackSubscriber implements EventSubscriberInterface
                     // http://docs.aws.amazon.com/ses/latest/DeveloperGuide/notification-contents.html#complaint-object
                     // abuse / auth-failure / fraud / not-spam / other / virus
                     $complianceCode = array_key_exists('complaintFeedbackType', $payload['complaint']) ? $payload['complaint']['complaintFeedbackType'] : 'unknown';
-                    $this->transportCallback->addFailureByAddress($this->cleanupEmailAdres($complaintRecipient['emailAddress']), $complianceCode, DoNotContact::BOUNCED, $emailId);
+                    $this->transportCallback->addFailureByAddress($this->cleanupEmailAdres($complaintRecipient['emailAddress']), $complianceCode, DoNotContact::UNSUBSCRIBED, $emailId);
                     $this->logger->debug("Mark email '".$complaintRecipient['emailAddress']."' has complained, reason: ".$complianceCode);
                 }
                 break;
