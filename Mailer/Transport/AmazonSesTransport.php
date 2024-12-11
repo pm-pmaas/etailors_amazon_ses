@@ -45,7 +45,7 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
      */
     public const AMAZON_REGION = [
         'us-east-1'      => 'us-east-1',
-        'us-east-2'      => 'us-west-2',
+        'us-west-2'      => 'us-west-2',
         'af-south-1'     => 'af-south-1',
         'ap-south-1'     => 'ap-south-1',
         'ap-northeast-2' => 'ap-northeast-2',
