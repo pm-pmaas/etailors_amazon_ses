@@ -59,7 +59,10 @@ Feel free to suggest improvements or provide feedback — this is my first Mauti
 ### 3. AWS SES Configuration
 
 1. Ensure that you have verified your domain and email addresses in AWS SES.
-2. Set up the appropriate IAM user with permissions to send emails via SES.
+2. Set up the appropriate IAM user with permissions to send emails via SES.  **Please make sure u have created a new IAM user directly
+via IAM instead of upgrading an SMTP user with the permission: sending via SES API **
+There are some cases known that it will not work when u upgrade the SMTP user with the extra permission
+(https://github.com/pm-pmaas/etailors_amazon_ses/issues/28)
 
 ### 4. Available Regions
 
