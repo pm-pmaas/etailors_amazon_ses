@@ -246,14 +246,16 @@ class CallbackSubscriber implements EventSubscriberInterface
         ];
     }
 
-    private function addFailureByAddressCustom(array $payload)
+    private function addFailureByAddressCustom(array $payload): void
     {
         $type = $payload['bounce']['bounceType'];
         $typeName = 'OTHER';
+        $channel = 'email';
         if ('Permanent' === $type) {
             $typeName = 'HARD';
         } elseif ('Transient' === $type) {
             $typeName = 'SOFT';
+            $channel = 'AWS';
         }
 
         $bouncedRecipients = $payload['bounce']['bouncedRecipients'];
@@ -262,7 +264,7 @@ class CallbackSubscriber implements EventSubscriberInterface
             $bounceSubType = $payload['bounce']['bounceSubType'];
             $bounceDiagnostic = array_key_exists('diagnosticCode', $bouncedRecipient) ? $bouncedRecipient['diagnosticCode'] : 'unknown';
             $bounceCode = $typeName.': AWS: '.$bounceSubType.': '.$bounceDiagnostic;
-            $this->addFailureByAddress($bouncedRecipient['emailAddress'], $bounceCode, DoNotContact::BOUNCED, 'AWS');
+            $this->addFailureByAddress($bouncedRecipient['emailAddress'], $bounceCode, DoNotContact::BOUNCED, $channel);
             $this->logger->debug("Mark email '".$bouncedRecipient['emailAddress']."' as bounced, reason: ".$bounceCode);
         }
     }
