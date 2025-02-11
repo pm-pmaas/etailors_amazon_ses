@@ -53,13 +53,49 @@ class AmazonSesTransportFactory extends AbstractTransportFactory
             self::initAmazonClient($dsn);
             $client = self::getAmazonClient();
 
+            $cacheFile = sys_get_temp_dir() . '/ses_send_quota.json';
+            $cacheTTL  = 3600; // 60 minutes
+
+            // read cache with lock
+            if (file_exists($cacheFile)) {
+                $handle = fopen($cacheFile, 'r');
+                if ($handle && flock($handle, LOCK_SH)) {
+                    $data = json_decode(fread($handle, filesize($cacheFile)), true);
+                    flock($handle, LOCK_UN);
+                    fclose($handle);
+
+                    if (isset($data['maxSendRate']) && (time() - $data['timestamp']) < $cacheTTL) {
+                        $this->logger->debug('maxSendRate from cache ' . $data['maxSendRate']);
+                        return new AmazonSesTransport(
+                            $client,
+                            $this->entityManager,
+                            $this->dispatcher,
+                            $this->logger,
+                            ['maxSendRate' => (int) $data['maxSendRate']]
+                        );
+                    }
+                }
+            }
+
             try {
-                $account     = $client->getAccount();
+                $account = $client->getAccount();
                 $maxSendRate = (int) floor($account->get('SendQuota')['MaxSendRate']);
-                $settings    = ['maxSendRate' => $maxSendRate];
+                $this->logger->debug('maxSendRate from request ' . $maxSendRate);
+
+                // cache the maxSendRate
+                $data = json_encode(['maxSendRate' => $maxSendRate, 'timestamp' => time()]);
+                file_put_contents($cacheFile, $data, LOCK_EX);
+
             } catch (\Exception $e) {
-                $this->logger->debug($e->getMessage());
-                $settings = ['maxSendRate' => 14];
+                $this->logger->error($e->getMessage());
+
+                // fallback to previous cached maxSendRate
+                if (isset($data['maxSendRate'])) {
+                    $maxSendRate = (int) $data['maxSendRate'];
+                    $this->logger->debug('Using previous cached maxSendRate: ' . $maxSendRate);
+                } else {
+                    $maxSendRate = 14; // standard fallback rate
+                }
             }
 
             return new AmazonSesTransport(
@@ -67,11 +103,14 @@ class AmazonSesTransportFactory extends AbstractTransportFactory
                 $this->entityManager,
                 $this->dispatcher,
                 $this->logger,
-                $settings
-            );        }
+                ['maxSendRate' => $maxSendRate]
+            );
+        }
 
         throw new UnsupportedSchemeException($dsn, 'Amazon SES', $this->getSupportedSchemes());
     }
+
+
 
     /**
      * @return SesV2Client
