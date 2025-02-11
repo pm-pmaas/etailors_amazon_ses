@@ -30,6 +30,7 @@ use Symfony\Component\Mime\Address;
 use Symfony\Component\Mime\Email;
 use Mautic\EmailBundle\Entity\Email as MauticEmailEntity;
 use Doctrine\ORM\EntityManagerInterface;
+use Symfony\Component\Mailer\Envelope;
 
 class AmazonSesTransport extends AbstractTransport implements TokenTransportInterface
 {
@@ -81,6 +82,8 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
 
     private $enableTemplate;
     private $entityManager;
+    private MauticMessage $message;
+    private Envelope $envelope;
 
     public function __construct(
         SesV2Client $amazonclient,
@@ -89,6 +92,7 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
         ?LoggerInterface $logger = null,
         $settings = []
     ) {
+
         parent::__construct($dispatcher, $logger);
         $this->logger     = $logger;
         $this->client     = $amazonclient;
@@ -108,6 +112,7 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
 
     public function __toString(): string
     {
+
         try {
             $credentials = $this->getCredentials();
         } catch (\Exception $exception) {
@@ -126,12 +131,14 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
         try {
             $email = $message->getOriginalMessage();
 
+
             // Ensure the message is an instance of MauticMessage
             if (!$email instanceof MauticMessage) {
                 throw new \Exception('Message must be an instance of '.MauticMessage::class);
             }
 
             $this->message = $email;
+            $this->envelope = $message->getEnvelope();
 
             // Use centralized method for updating From address
             $this->updateEmailFields($email);
@@ -188,6 +195,7 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
     public function convertMessageToRawPayload(): \Generator
     {
         $metadata = $this->getMetadata();
+        $emailId = $this->getEmailIdFromMetadata($this->getMetadata());
 
         $payload = [];
         if (empty($metadata)) {
@@ -258,7 +266,7 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
             ? "$name <{$fromAddress->getAddress()}>"
             : $fromAddress->getAddress();
 
-        $payload['ReplyToAddresses'] = $this->stringifyAddresses($sentMessage->getReplyTo());
+        $payload['ReplyToAddresses'] = $this->stringifyAddresses($this->setReplyTo($sentMessage));
 
         foreach ($sentMessage->getHeaders()->all() as $header) {
             if ($header instanceof MetadataHeader) {
@@ -368,16 +376,11 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
     private function updateEmailFields(MauticMessage $email): void
     {
         $emailId = $this->getEmailIdFromMetadata($email->getMetadata());
-
         if ($emailId !== null) {
             $emailEntity = $this->entityManager->getRepository(MauticEmailEntity::class)->find($emailId);
             if ($emailEntity) {
                 // Update From Address and Name
-                $customFromAddress = $emailEntity->getFromAddress();
-                $customFromName = $emailEntity->getFromName();
-                if ($customFromAddress) {
-                    $email->from(new Address($customFromAddress, $customFromName ?: ''));
-                }
+                $email = $this->setFrom($email, $emailEntity);
 
                 // Add Custom Headers, checking for duplicates
                 $customHeaders = $emailEntity->getHeaders();
@@ -391,6 +394,44 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
                 }
             }
         }
+    }
+
+    private function setFrom(MauticMessage $email, \Mautic\EmailBundle\Entity\Email $emailEntity): MauticMessage
+    {
+        $entityEmailFrom = $this->envelope->getSender()->getAddress();
+        $entityNameFrom = $this->envelope->getSender()->getName();
+        if (!empty($emailEntity->getFromAddress())) {
+            $entityEmailFrom = $emailEntity->getFromAddress();
+        }
+
+        if (!empty($emailEntity->getFromName())) {
+            $entityNameFrom = $emailEntity->getFromName();
+        }
+
+        $email->from(new Address($entityEmailFrom, $entityNameFrom));
+
+        return $email;
+
+    }
+
+    private function setReplyTo(MauticMessage $sentMessage): array
+    {
+
+        $emailId = $this->getEmailIdFromMetadata($this->message->getMetadata());
+        if($emailId !== null){
+            $emailEntity = $this->entityManager->getRepository(MauticEmailEntity::class)->find($emailId);
+            if($emailEntity){
+                $entityReplyTo = $emailEntity->getReplyToAddress();
+                if (!empty($entityReplyTo)) {
+                    $entityReplyTo = explode(',', $entityReplyTo);
+                    foreach ($entityReplyTo as $key => $value) {
+                        $entityReplyTo[$key] = new Address($value);
+                    }
+                    return $entityReplyTo;
+                }
+            }
+        }
+        return $sentMessage->getReplyTo();
     }
 
 }
