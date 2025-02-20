@@ -85,14 +85,19 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
     private MauticMessage $message;
     private Envelope $envelope;
 
+    private SesV2Client $client;
+    private EventDispatcherInterface $dispatcher;
+    private LoggerInterface $logger;
+
+    private array $settings;
+
     public function __construct(
         SesV2Client $amazonclient,
         EntityManagerInterface $entityManager,
         ?EventDispatcherInterface $dispatcher = null,
         ?LoggerInterface $logger = null,
-        $settings = []
+        $settings = [],
     ) {
-
         parent::__construct($dispatcher, $logger);
         $this->logger     = $logger;
         $this->client     = $amazonclient;
@@ -195,7 +200,6 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
     public function convertMessageToRawPayload(): \Generator
     {
         $metadata = $this->getMetadata();
-        $emailId = $this->getEmailIdFromMetadata($this->getMetadata());
 
         $payload = [];
         if (empty($metadata)) {
@@ -220,21 +224,25 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
             yield $payload;
             $payload = [];
         } else {
+
             /**
              * This message is a tokenzied message, SES API does not support tokens in Raw Emails
              * We need to create a new message for each recipient.
              */
-            $metadataSet  = reset($metadata);
-            $tokens       = (!empty($metadataSet['tokens'])) ? $metadataSet['tokens'] : [];
-            $mauticTokens = array_keys($tokens);
             foreach ($metadata as $recipient => $mailData) {
                 $sentMessage = clone $this->message;
                 $sentMessage->clearMetadata();
                 $sentMessage->updateLeadIdHash($mailData['hashId']);
                 $sentMessage->to(new Address($recipient, $mailData['name'] ?? ''));
+
+                // Sort tokens to ensure the same order in the email =)
+                $sortedTokens = $mailData['tokens'];
+                ksort($sortedTokens);
+                $mauticTokens = array_keys($sortedTokens);
+                MailHelper::searchReplaceTokens($mauticTokens, $sortedTokens, $sentMessage);
+
                 // Update From Address dynamically
                 $this->updateEmailFields($sentMessage);
-                MailHelper::searchReplaceTokens($mauticTokens, $mailData['tokens'], $sentMessage);
                 $this->addSesHeaders($payload, $sentMessage);
                 $payload['Destination'] = [
                     'ToAddresses'  => $this->stringifyAddresses($sentMessage->getTo()),
