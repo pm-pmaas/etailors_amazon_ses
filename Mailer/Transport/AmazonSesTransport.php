@@ -208,7 +208,7 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
             // Update From Address dynamically
             $this->updateEmailFields($sentMessage);
 
-            $this->addSesHeaders($payload, $sentMessage);
+            $this->addSesHeaders($payload, $sentMessage, []);
             $payload = [
                 'Content' => [
                     'Raw' => [
@@ -243,7 +243,7 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
 
                 // Update From Address dynamically
                 $this->updateEmailFields($sentMessage);
-                $this->addSesHeaders($payload, $sentMessage);
+                $this->addSesHeaders($payload, $sentMessage, $mailData);
                 $payload['Destination'] = [
                     'ToAddresses'  => $this->stringifyAddresses($sentMessage->getTo()),
                     'CcAddresses'  => $this->stringifyAddresses($sentMessage->getCc()),
@@ -266,7 +266,7 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
      * @param array<string, mixed> $payload
      * @param MauticMessage        $sentMessage the message to be sent
      */
-    private function addSesHeaders(&$payload, MauticMessage &$sentMessage): void
+    private function addSesHeaders(&$payload, MauticMessage &$sentMessage, array $mailData): void
     {
         $fromAddress = $sentMessage->getFrom()[0];
         $name = trim($fromAddress->getName());
@@ -292,6 +292,12 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
                     case 'X-SES-FROM-EMAIL-ADDRESS-IDENTITYARN':
                         $payload['FromEmailAddressIdentityArn'] = $header->getBodyAsString();
                         $sentMessage->getHeaders()->remove($header->getName());
+                        break;
+                    case 'List-Unsubscribe':
+                        $sentMessage->getHeaders()->remove($header->getName());
+                        if(!empty($mailData) && isset($mailData['tokens']['{unsubscribe_url}'])){
+                            $sentMessage->getHeaders()->addTextHeader('List-Unsubscribe', '<'.$mailData['tokens']['{unsubscribe_url}'].'>');
+                        }
                         break;
                         /*
                          * https://docs.aws.amazon.com/aws-sdk-php/v3/api/api-sesv2-2019-09-27.html#sendemail
