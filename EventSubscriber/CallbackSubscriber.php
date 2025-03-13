@@ -98,6 +98,8 @@ class CallbackSubscriber implements EventSubscriberInterface
             $type = $payload['Type'];
         } elseif (array_key_exists('eventType', $payload)) {
             $type = $payload['eventType'];
+        } elseif (array_key_exists('notificationType', $payload)) {
+            $type = $payload['notificationType'];
         } else {
             $event->setResponse(
                 $this->createResponse(
@@ -216,7 +218,7 @@ class CallbackSubscriber implements EventSubscriberInterface
                     // http://docs.aws.amazon.com/ses/latest/DeveloperGuide/notification-contents.html#complaint-object
                     // abuse / auth-failure / fraud / not-spam / other / virus
                     $complianceCode = array_key_exists('complaintFeedbackType', $payload['complaint']) ? $payload['complaint']['complaintFeedbackType'] : 'unknown';
-                    $this->transportCallback->addFailureByAddress($this->cleanupEmailAdres($complaintRecipient['emailAddress']), $complianceCode, DoNotContact::UNSUBSCRIBED, $emailId);
+                    $this->transportCallback->addFailureByAddress($this->cleanupEmailAddress($complaintRecipient['emailAddress']), $complianceCode, DoNotContact::UNSUBSCRIBED, $emailId);
                     $this->logger->debug("Mark email '".$complaintRecipient['emailAddress']."' has complained, reason: ".$complianceCode);
                 }
                 break;
@@ -264,12 +266,12 @@ class CallbackSubscriber implements EventSubscriberInterface
             $bounceSubType = $payload['bounce']['bounceSubType'];
             $bounceDiagnostic = array_key_exists('diagnosticCode', $bouncedRecipient) ? $bouncedRecipient['diagnosticCode'] : 'unknown';
             $bounceCode = $typeName.': AWS: '.$bounceSubType.': '.$bounceDiagnostic;
-            $this->addFailureByAddress($bouncedRecipient['emailAddress'], $bounceCode, DoNotContact::BOUNCED, $channel);
+            $this->addFailureByAddress($this->cleanupEmailAddress($bouncedRecipient['emailAddress']), $bounceCode, DoNotContact::BOUNCED, $channel);
             $this->logger->debug("Mark email '".$bouncedRecipient['emailAddress']."' as bounced, reason: ".$bounceCode);
         }
     }
 
-    public function cleanupEmailAdres($email)
+    public function cleanupEmailAddress($email)
     {
         return preg_replace('/(.*)<(.*)>(.*)/s', '\2', $email);
     }
