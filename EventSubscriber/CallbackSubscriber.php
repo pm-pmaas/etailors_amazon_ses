@@ -259,15 +259,15 @@ class CallbackSubscriber implements EventSubscriberInterface
             $typeName = 'SOFT';
             $channel = 'AWS';
         }
-
+        $emailId = $this->getEmailHeader($payload);
         $bouncedRecipients = $payload['bounce']['bouncedRecipients'];
-
         foreach ($bouncedRecipients as $bouncedRecipient) {
             $bounceSubType = $payload['bounce']['bounceSubType'];
             $bounceDiagnostic = array_key_exists('diagnosticCode', $bouncedRecipient) ? $bouncedRecipient['diagnosticCode'] : 'unknown';
             $bounceCode = $typeName.': AWS: '.$bounceSubType.': '.$bounceDiagnostic;
-            $this->addFailureByAddress($this->cleanupEmailAddress($bouncedRecipient['emailAddress']), $bounceCode, DoNotContact::BOUNCED, $channel);
-            $this->logger->debug("Mark email '".$bouncedRecipient['emailAddress']."' as bounced, reason: ".$bounceCode);
+            $channelWithId = [$channel => $emailId];
+            $this->addFailureByAddress($this->cleanupEmailAddress($bouncedRecipient['emailAddress']),$bounceCode,DoNotContact::BOUNCED,$channelWithId);
+            $this->logger->debug("Mark email '" . $bouncedRecipient['emailAddress'] . "' as bounced, reason: " . $bounceCode);
         }
     }
 
