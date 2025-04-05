@@ -154,11 +154,10 @@ class AmazonSesTransportFactory extends AbstractTransportFactory
         }
      }
 
-    private function getCachePath(): string
+    private function getQuotaCachePath(): string
     {
-        $container = \Mautic\CoreBundle\Factory\MauticFactory::getContainerStatic();
-        $cachePath = $container->getParameter('kernel.cache_dir');
-        return $cachePath . '/ses_send_quota.json';    
+        $cacheDir = $GLOBALS['kernel']->getContainer()->getParameter('kernel.cache_dir');
+        return $cacheDir . '/ses_send_quota.json';
     }
 
     /**
