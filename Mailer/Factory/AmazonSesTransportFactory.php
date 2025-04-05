@@ -18,14 +18,13 @@ use Symfony\Component\Mailer\Transport\AbstractTransportFactory;
 use Symfony\Component\Mailer\Transport\Dsn;
 use Symfony\Component\Mailer\Transport\TransportInterface;
 use Symfony\Contracts\Translation\TranslatorInterface;
-use Symfony\Component\DependencyInjection\ParameterBag\ParameterBagInterface;
+use Symfony\Component\DependencyInjection\ContainerInterface;
 
 
 class AmazonSesTransportFactory extends AbstractTransportFactory
 {
     private static SesV2Client $amazonclient;
     private static TranslatorInterface $translator;
-    private ParameterBagInterface $params;
 
     private EntityManagerInterface $entityManager;
 
@@ -40,7 +39,6 @@ class AmazonSesTransportFactory extends AbstractTransportFactory
         parent::__construct($eventDispatcher, $amazonclient, $logger);
         self::$translator = $translator;
         $this->entityManager = $entityManager;
-        $this->params = $params;
     }
 
     protected function getSupportedSchemes(): array
@@ -158,7 +156,9 @@ class AmazonSesTransportFactory extends AbstractTransportFactory
 
     private function getCachePath(): string
     {
-        return $this->params->get('kernel.cache_dir') . 'ses_send_quota.json';
+        $container = \Mautic\CoreBundle\Factory\MauticFactory::getContainerStatic();
+        $cachePath = $container->getParameter('kernel.cache_dir');
+        return $cachePath . '/ses_send_quota.json';    
     }
 
     /**
