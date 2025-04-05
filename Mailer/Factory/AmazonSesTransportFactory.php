@@ -19,7 +19,7 @@ use Symfony\Component\Mailer\Transport\Dsn;
 use Symfony\Component\Mailer\Transport\TransportInterface;
 use Symfony\Contracts\Translation\TranslatorInterface;
 use Symfony\Component\DependencyInjection\ContainerInterface;
-
+use Mautic\CoreBundle\Helper\CoreParametersHelper;
 
 class AmazonSesTransportFactory extends AbstractTransportFactory
 {
@@ -156,8 +156,8 @@ class AmazonSesTransportFactory extends AbstractTransportFactory
 
     private function getCachePath(): string
     {
-        $cacheDir = $GLOBALS['kernel']->getContainer()->getParameter('kernel.cache_dir');
-        return $cacheDir . '/ses_send_quota.json';
+          $coreParams = new CoreParametersHelper();
+          return $coreParams->get('kernel.cache_dir') . '/ses_send_quota.json';
     }
 
     /**
