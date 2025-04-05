@@ -154,7 +154,7 @@ class AmazonSesTransportFactory extends AbstractTransportFactory
         }
      }
 
-    private function getQuotaCachePath(): string
+    private function getCachePath(): string
     {
         $cacheDir = $GLOBALS['kernel']->getContainer()->getParameter('kernel.cache_dir');
         return $cacheDir . '/ses_send_quota.json';
