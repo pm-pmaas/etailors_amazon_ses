@@ -156,7 +156,7 @@ class AmazonSesTransportFactory extends AbstractTransportFactory
 
     private function getCachePath(): string
     {
-          $coreParams = new CoreParametersHelper();
+          $coreParams = $this->container->get(CoreParametersHelper::class);
           return $coreParams->get('kernel.cache_dir') . '/ses_send_quota.json';
     }
 
