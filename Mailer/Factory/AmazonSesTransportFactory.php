@@ -53,42 +53,31 @@ class AmazonSesTransportFactory extends AbstractTransportFactory
         if (AmazonSesTransport::MAUTIC_AMAZONSES_API_SCHEME === $dsn->getScheme()) {
             self::initAmazonClient($dsn);
             $client = self::getAmazonClient();
-
+    
+            $manualRate = $dsn->getOption('ratelimit');
+    
             $cacheFile = sys_get_temp_dir() . '/ses_send_quota.json';
             $cacheTTL = 3600; // 60 minutes
-
-            // Check cached value first
+    
             $cachedRate = $this->getCachedSendRate($cacheFile, $cacheTTL);
-            if ($cachedRate !== null) {
-                return new AmazonSesTransport(
-                    $client,
-                    $this->entityManager,
-                    $this->dispatcher,
-                    $this->logger,
-                    ['maxSendRate' => $cachedRate]
-                );
-            }
-
+    
             try {
-                // Fetch fresh value from AWS
                 $account = $client->getAccount();
-                $maxSendRate = (int)floor($account->get('SendQuota')['MaxSendRate']);
-
-                // Save to cache
-                $this->saveSendRateToCache($cacheFile, $maxSendRate);
+                $fetchedRate = (int)floor($account->get('SendQuota')['MaxSendRate']);
+                $this->saveSendRateToCache($cacheFile, $fetchedRate);
             } catch (\Exception $e) {
                 $this->logger->error($e->getMessage());
-
-                // Fallback to expired cache if available else use default rate
-                $maxSendRate = $this->getCachedSendRate($cacheFile, PHP_INT_MAX) ?? 14;
+                $fetchedRate = $this->getCachedSendRate($cacheFile, PHP_INT_MAX) ?? null;
             }
-
+    
+            $effectiveRate = (int)($manualRate ?? $cachedRate ?? $fetchedRate ?? 14);
+    
             return new AmazonSesTransport(
                 $client,
                 $this->entityManager,
                 $this->dispatcher,
                 $this->logger,
-                ['maxSendRate' => $maxSendRate]
+                ['maxSendRate' => $effectiveRate]
             );
         }
 
