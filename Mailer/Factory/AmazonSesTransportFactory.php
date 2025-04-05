@@ -56,7 +56,7 @@ class AmazonSesTransportFactory extends AbstractTransportFactory
     
             $manualRate = $dsn->getOption('ratelimit');
     
-            $cacheFile = $GLOBALS['kernel']->getCacheDir() . '/ses_send_quota.json';
+            $cacheFile = $this->getCachePath();
             $cacheTTL = 3600; // 60 minutes
     
             $cachedRate = $this->getCachedSendRate($cacheFile, $cacheTTL);
@@ -151,6 +151,11 @@ class AmazonSesTransportFactory extends AbstractTransportFactory
             $this->logger?->error("Failed to move temp SES cache to: $cacheFile");
         }
      }
+
+    private function getCachePath(): string
+    {
+        return dirname(__DIR__, 5) . '/var/cache/ses_send_quota.json';
+    }
 
     /**
      * @return SesV2Client
