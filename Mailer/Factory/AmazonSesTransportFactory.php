@@ -196,6 +196,7 @@ class AmazonSesTransportFactory extends AbstractTransportFactory
                 'version'     => 'latest',
                 'credentials' => CredentialProvider::fromCredentials(new Credentials($dsn_user, $dsn_password)),
                 'region'      => $dsn_region,
+                'use_aws_shared_config_files' => false,
             ];
 
             if ($handler) {
