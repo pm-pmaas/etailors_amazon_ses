@@ -56,7 +56,7 @@ class AmazonSesTransportFactory extends AbstractTransportFactory
     
             $manualRate = $dsn->getOption('ratelimit');
     
-            $cacheFile = sys_get_temp_dir() . '/ses_send_quota.json';
+            $cacheFile = $GLOBALS['kernel']->getCacheDir() . '/ses_send_quota.json';
             $cacheTTL = 3600; // 60 minutes
     
             $cachedRate = $this->getCachedSendRate($cacheFile, $cacheTTL);
@@ -66,7 +66,7 @@ class AmazonSesTransportFactory extends AbstractTransportFactory
                 $fetchedRate = (int)floor($account->get('SendQuota')['MaxSendRate']);
                 $this->saveSendRateToCache($cacheFile, $fetchedRate);
             } catch (\Exception $e) {
-                $this->logger->error($e->getMessage());
+                $this->logger?->error('SES quota fetch failed: ' . $e->getMessage());
                 $fetchedRate = $this->getCachedSendRate($cacheFile, PHP_INT_MAX) ?? null;
             }
     
@@ -122,17 +122,35 @@ class AmazonSesTransportFactory extends AbstractTransportFactory
      * @param int $maxSendRate
      * @return void
      */
-    private function saveSendRateToCache(string $cacheFile, int $maxSendRate): void
-    {
-        $tempFile = tempnam(sys_get_temp_dir(), 'ses_');
-        file_put_contents($tempFile, json_encode([
+     private function saveSendRateToCache(string $cacheFile, int $maxSendRate): void
+     {
+        $cacheDir = dirname($cacheFile);
+    
+        if (!is_writable($cacheDir)) {
+            $this->logger?->error("SES quota cache dir not writable: $cacheDir");
+            return;
+        }
+    
+        $tempFile = tempnam($cacheDir, 'ses_');
+        if ($tempFile === false) {
+            $this->logger?->error("Failed to create temp file in: $cacheDir");
+            return;
+        }
+    
+        $jsonData = json_encode([
             'maxSendRate' => $maxSendRate,
             'timestamp' => time()
-        ]));
-
-        rename($tempFile, $cacheFile);
-    }
-
+        ]);
+    
+        if (@file_put_contents($tempFile, $jsonData) === false) {
+            $this->logger?->error("Failed to write SES cache to: $tempFile");
+            return;
+        }
+    
+        if (!@rename($tempFile, $cacheFile)) {
+            $this->logger?->error("Failed to move temp SES cache to: $cacheFile");
+        }
+     }
 
     /**
      * @return SesV2Client
