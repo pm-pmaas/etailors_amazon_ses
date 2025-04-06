@@ -25,7 +25,7 @@ class AmazonSesTransportFactory extends AbstractTransportFactory
 {
     private static SesV2Client $amazonclient;
     private static TranslatorInterface $translator;
-
+    private PathsHelper $pathsHelper;
     private EntityManagerInterface $entityManager;
 
     public function __construct(
@@ -33,12 +33,14 @@ class AmazonSesTransportFactory extends AbstractTransportFactory
         EventDispatcherInterface $eventDispatcher,
         TranslatorInterface $translator,
         EntityManagerInterface $entityManager,
+        PathsHelper $pathsHelper,
         ?LoggerInterface $logger = null,
         ?SesV2Client $amazonclient = null
     ) {
         parent::__construct($eventDispatcher, $amazonclient, $logger);
         self::$translator = $translator;
         $this->entityManager = $entityManager;
+        $pathsHelper,
     }
 
     protected function getSupportedSchemes(): array
@@ -156,10 +158,7 @@ class AmazonSesTransportFactory extends AbstractTransportFactory
 
      private function getCachePath(): string
      {
-        $container = $GLOBALS['kernel']->getContainer();
-        $pathsHelper = $container->get('mautic.helper.paths');
-        $cacheDir = $pathsHelper->getSystemPath('cache', true);
-        return $cacheDir . '/ses_send_quota.json';
+            return $this->pathsHelper->getSystemPath('cache', true) . '/ses_send_quota.json';
      }
 
     /**
