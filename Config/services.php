@@ -15,6 +15,7 @@ use Symfony\Component\DependencyInjection\Loader\Configurator\ContainerConfigura
  * @param ContainerConfigurator $configurator
  * @return void
  */
+
 return static function (ContainerConfigurator $configurator) {
     $services = $configurator->services()
         ->defaults()
@@ -28,5 +29,7 @@ return static function (ContainerConfigurator $configurator) {
     $services->load('MauticPlugin\\AmazonSesBundle\\', '../')
         ->exclude('../{'.implode(',', array_merge(MauticCoreExtension::DEFAULT_EXCLUDES, $excludes)).'}');
 
-    $services->get(AmazonSesTransportFactory::class)->tag('mailer.transport_factory');
+    $services->get(AmazonSesTransportFactory::class)
+        ->arg('$pathsHelper', service('mautic.helper.paths'))
+        ->tag('mailer.transport_factory');
 };
