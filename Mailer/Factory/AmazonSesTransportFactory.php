@@ -18,12 +18,14 @@ use Symfony\Component\Mailer\Transport\AbstractTransportFactory;
 use Symfony\Component\Mailer\Transport\Dsn;
 use Symfony\Component\Mailer\Transport\TransportInterface;
 use Symfony\Contracts\Translation\TranslatorInterface;
+use Symfony\Component\DependencyInjection\ContainerInterface;
+use Mautic\CoreBundle\Helper\PathsHelper;
 
 class AmazonSesTransportFactory extends AbstractTransportFactory
 {
     private static SesV2Client $amazonclient;
     private static TranslatorInterface $translator;
-
+    private PathsHelper $pathsHelper;
     private EntityManagerInterface $entityManager;
 
     public function __construct(
@@ -31,12 +33,14 @@ class AmazonSesTransportFactory extends AbstractTransportFactory
         EventDispatcherInterface $eventDispatcher,
         TranslatorInterface $translator,
         EntityManagerInterface $entityManager,
+        PathsHelper $pathsHelper,
         ?LoggerInterface $logger = null,
         ?SesV2Client $amazonclient = null
     ) {
         parent::__construct($eventDispatcher, $amazonclient, $logger);
         self::$translator = $translator;
         $this->entityManager = $entityManager;
+        $this->pathsHelper = $pathsHelper;
     }
 
     protected function getSupportedSchemes(): array
@@ -53,42 +57,31 @@ class AmazonSesTransportFactory extends AbstractTransportFactory
         if (AmazonSesTransport::MAUTIC_AMAZONSES_API_SCHEME === $dsn->getScheme()) {
             self::initAmazonClient($dsn);
             $client = self::getAmazonClient();
-
-            $cacheFile = sys_get_temp_dir() . '/ses_send_quota.json';
+    
+            $manualRate = $dsn->getOption('ratelimit');
+    
+            $cacheFile = $this->getCachePath();
             $cacheTTL = 3600; // 60 minutes
-
-            // Check cached value first
+    
             $cachedRate = $this->getCachedSendRate($cacheFile, $cacheTTL);
-            if ($cachedRate !== null) {
-                return new AmazonSesTransport(
-                    $client,
-                    $this->entityManager,
-                    $this->dispatcher,
-                    $this->logger,
-                    ['maxSendRate' => $cachedRate]
-                );
-            }
-
+    
             try {
-                // Fetch fresh value from AWS
                 $account = $client->getAccount();
-                $maxSendRate = (int)floor($account->get('SendQuota')['MaxSendRate']);
-
-                // Save to cache
-                $this->saveSendRateToCache($cacheFile, $maxSendRate);
+                $fetchedRate = (int)floor($account->get('SendQuota')['MaxSendRate']);
+                $this->saveSendRateToCache($cacheFile, $fetchedRate);
             } catch (\Exception $e) {
-                $this->logger->error($e->getMessage());
-
-                // Fallback to expired cache if available else use default rate
-                $maxSendRate = $this->getCachedSendRate($cacheFile, PHP_INT_MAX) ?? 14;
+                $this->logger?->error('SES quota fetch failed: ' . $e->getMessage());
+                $fetchedRate = $this->getCachedSendRate($cacheFile, PHP_INT_MAX) ?? null;
             }
-
+    
+            $effectiveRate = (int)($manualRate ?? $cachedRate ?? $fetchedRate ?? 14);
+    
             return new AmazonSesTransport(
                 $client,
                 $this->entityManager,
                 $this->dispatcher,
                 $this->logger,
-                ['maxSendRate' => $maxSendRate]
+                ['maxSendRate' => $effectiveRate]
             );
         }
 
@@ -133,17 +126,40 @@ class AmazonSesTransportFactory extends AbstractTransportFactory
      * @param int $maxSendRate
      * @return void
      */
-    private function saveSendRateToCache(string $cacheFile, int $maxSendRate): void
-    {
-        $tempFile = tempnam(sys_get_temp_dir(), 'ses_');
-        file_put_contents($tempFile, json_encode([
+     private function saveSendRateToCache(string $cacheFile, int $maxSendRate): void
+     {
+        $cacheDir = dirname($cacheFile);
+    
+        if (!is_writable($cacheDir)) {
+            $this->logger?->error("SES quota cache dir not writable: $cacheDir");
+            return;
+        }
+    
+        $tempFile = tempnam($cacheDir, 'ses_');
+        if ($tempFile === false) {
+            $this->logger?->error("Failed to create temp file in: $cacheDir");
+            return;
+        }
+    
+        $jsonData = json_encode([
             'maxSendRate' => $maxSendRate,
             'timestamp' => time()
-        ]));
+        ]);
+    
+        if (@file_put_contents($tempFile, $jsonData) === false) {
+            $this->logger?->error("Failed to write SES cache to: $tempFile");
+            return;
+        }
+    
+        if (!@rename($tempFile, $cacheFile)) {
+            $this->logger?->error("Failed to move temp SES cache to: $cacheFile");
+        }
+     }
 
-        rename($tempFile, $cacheFile);
-    }
-
+     private function getCachePath(): string
+     {
+            return $this->pathsHelper->getSystemPath('cache', true) . '/ses_send_quota.json';
+     }
 
     /**
      * @return SesV2Client
