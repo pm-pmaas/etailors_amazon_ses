@@ -40,7 +40,7 @@ class AmazonSesTransportFactory extends AbstractTransportFactory
         parent::__construct($eventDispatcher, $amazonclient, $logger);
         self::$translator = $translator;
         $this->entityManager = $entityManager;
-        $pathsHelper,
+        $pathsHelper;
     }
 
     protected function getSupportedSchemes(): array
