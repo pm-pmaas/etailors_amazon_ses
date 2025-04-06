@@ -223,6 +223,8 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
             ];
             yield $payload;
             $payload = [];
+            $this->throttle();
+
         } else {
 
             /**
@@ -256,6 +258,7 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
                 ];
                 yield $payload;
                 $payload = [];
+                $this->throttle();
             }
         }
     }
@@ -366,7 +369,15 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
 
     public function getMaxBatchLimit(): int
     {
-        return 50;
+        return (int) ($this->settings['maxSendRate'] ?? 14);    
+    }
+
+    private function throttle(): void
+    {
+        $rate = $this->settings['maxSendRate'] ?? 14;
+        $delay = (int)(1_000_000 / max(1, $rate));
+        usleep($delay);
+        $this->logger?->debug("SES rate throttling: sleeping for {$delay} µs");
     }
 
     private function getEmailIdFromMetadata(array $metadata): ?int

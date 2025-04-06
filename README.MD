@@ -1,4 +1,3 @@
-
 # Mautic AWS SES Plugin with SNS Callback
 
 This plugin provides integration between [Mautic 5](https://www.mautic.org) and [Amazon SES](https://aws.amazon.com/ses/) for sending emails through AWS. It also integrates with [Amazon SNS](https://aws.amazon.com/sns/) for handling email feedback such as bounces and complaints via callbacks.
@@ -11,8 +10,13 @@ Feel free to suggest improvements or provide feedback — this is my first Mauti
 
 ## Features
 - Send emails through Amazon SES using the API.
-- Support for setting AWS regions directly within the DSN.
+- Support for setting AWS regions and optional custom rate limits in the DSN.
 - Integration with Amazon SNS to process bounces and complaints via callback.
+- Built-in **rate limiting** to honor SES sending quotas.
+- Dynamic **batch size** matching the current SES max send rate.
+- Auto-fetch and cache your SES sending quota.
+- Manual override of rate limit with `ratelimit` DSN option.
+- Optional retry handling for partial email failures.
 
 ---
 
@@ -42,27 +46,28 @@ Feel free to suggest improvements or provide feedback — this is my first Mauti
 3. In the **DSN** field, enter your connection string in the following format:
 
    ```text
-   mautic+ses+api://<AWS_ACCESS_KEY>:<AWS_SECRET_KEY>@default?region=<AWS_REGION>
+   mautic+ses+api://<AWS_ACCESS_KEY>:<AWS_SECRET_KEY>@default?region=<AWS_REGION>&ratelimit=14
    ```
 
    - Replace `<AWS_ACCESS_KEY>` and `<AWS_SECRET_KEY>` with your AWS credentials.
    - Replace `<AWS_REGION>` with your AWS region (e.g., `us-east-1`).
+   - Optionally set `ratelimit` to override the SES max send rate manually.
 
 4. Set the region in the `options` parameter, for example:
 
    ```text
    Label: region   Value: eu-west-1
    ```
-![Amazon SES Integration](https://github.com/pm-pmaas/etailors_amazon_ses/blob/1.0.1/Assets/img/mautic-ses-dsn.png)
 
+![Amazon SES Integration](https://github.com/pm-pmaas/etailors_amazon_ses/blob/1.0.1/Assets/img/mautic-ses-dsn.png)
 
 ### 3. AWS SES Configuration
 
 1. Ensure that you have verified your domain and email addresses in AWS SES.
-2. Set up the appropriate IAM user with permissions to send emails via SES.  **Please make sure u have created a new IAM user directly
-via IAM instead of upgrading an SMTP user with the permission: sending via SES API **
-There are some cases known that it will not work when u upgrade the SMTP user with the extra permission
-(https://github.com/pm-pmaas/etailors_amazon_ses/issues/28)
+2. Set up the appropriate IAM user with permissions to send emails via SES.  **Please make sure you create a new IAM user directly
+via IAM instead of upgrading an SMTP user with the permission: sending via SES API**.
+   
+   There are known issues when upgrading SMTP-only users — see: [issue #28](https://github.com/pm-pmaas/etailors_amazon_ses/issues/28).
 
 ### 4. Available Regions
 
@@ -104,10 +109,18 @@ To receive feedback from Amazon SES regarding bounces and complaints, you need t
 
 ---
 
-## Batch Limit
+## Batch Limit & Throttling
 
-Informed by: @mabumusa1 When you make the batch 5000 addresses, this will make most accounts break the API sending limit, I suggest you make it 50, so merged 
-this pull request ( https://github.com/pm-pmaas/etailors_amazon_ses/pull/8 ).
+To avoid exceeding SES rate limits, this plugin automatically:
+
+- Caches the current `maxSendRate` returned by AWS SES.
+- Dynamically adjusts the batch size to match that rate.
+- Throttles outgoing email API calls using `usleep()`.
+- Allows overriding the send rate via `ratelimit` DSN option.
+
+This prevents common errors like `TooManyRequests` while making the most of your quota.
+
+---
 
 ## Debugging
 
