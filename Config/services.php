@@ -11,6 +11,8 @@ declare(strict_types=1);
 use Mautic\CoreBundle\DependencyInjection\MauticCoreExtension;
 use MauticPlugin\AmazonSesBundle\Mailer\Factory\AmazonSesTransportFactory;
 use Symfony\Component\DependencyInjection\Loader\Configurator\ContainerConfigurator;
+use function Symfony\Component\DependencyInjection\Loader\Configurator\service; 
+
 /**
  * @param ContainerConfigurator $configurator
  * @return void
