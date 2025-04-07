@@ -374,10 +374,26 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
 
     private function throttle(): void
     {
+        static $lastSendTime = 0;
+        
         $rate = $this->settings['maxSendRate'] ?? 14;
-        $delay = (int)(1_000_000 / max(1, $rate));
-        usleep($delay);
-        $this->logger?->debug("SES rate throttling: sleeping for {$delay} µs");
+        $targetInterval = (int)(1_000_000 / max(1, $rate));
+        
+        $now = microtime(true) * 1_000_000;
+        
+        if ($lastSendTime > 0) {
+            $elapsed = $now - $lastSendTime;
+            $remainingDelay = $targetInterval - $elapsed;
+            
+            if ($remainingDelay > 1000) {
+                usleep((int)$remainingDelay);
+                $this->logger?->debug("SES adaptive throttling: elapsed={$elapsed}µs, sleeping={$remainingDelay}µs");
+            } else {
+                $this->logger?->debug("SES adaptive throttling: no sleep needed (elapsed={$elapsed}µs)");
+            }
+        }
+        
+        $lastSendTime = microtime(true) * 1_000_000;
     }
 
     private function getEmailIdFromMetadata(array $metadata): ?int

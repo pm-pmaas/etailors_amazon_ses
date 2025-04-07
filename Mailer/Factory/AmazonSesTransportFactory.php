@@ -65,13 +65,15 @@ class AmazonSesTransportFactory extends AbstractTransportFactory
     
             $cachedRate = $this->getCachedSendRate($cacheFile, $cacheTTL);
     
-            try {
-                $account = $client->getAccount();
-                $fetchedRate = (int)floor($account->get('SendQuota')['MaxSendRate']);
-                $this->saveSendRateToCache($cacheFile, $fetchedRate);
-            } catch (\Exception $e) {
-                $this->logger?->error('SES quota fetch failed: ' . $e->getMessage());
-                $fetchedRate = $this->getCachedSendRate($cacheFile, PHP_INT_MAX) ?? null;
+            if ($cachedRate == null) {
+                try {
+                    $account = $client->getAccount();
+                    $fetchedRate = (int)floor($account->get('SendQuota')['MaxSendRate']);
+                    $this->saveSendRateToCache($cacheFile, $fetchedRate);
+                } catch (\Exception $e) {
+                    $this->logger?->error('SES quota fetch failed: ' . $e->getMessage());
+                    $fetchedRate = $this->getCachedSendRate($cacheFile, PHP_INT_MAX) ?? null;
+                }
             }
     
             $effectiveRate = (int)($manualRate ?? $cachedRate ?? $fetchedRate ?? 14);
@@ -148,11 +150,19 @@ class AmazonSesTransportFactory extends AbstractTransportFactory
     
         if (@file_put_contents($tempFile, $jsonData) === false) {
             $this->logger?->error("Failed to write SES cache to: $tempFile");
+            @unlink($tempFile);
             return;
         }
     
+        if (!@chmod($tempFile, 0644)) {
+            $this->logger?->warning("Failed to set permissions on temp file: $tempFile");
+        }
+
         if (!@rename($tempFile, $cacheFile)) {
             $this->logger?->error("Failed to move temp SES cache to: $cacheFile");
+            @unlink($tempFile);
+        } else {
+            @chmod($cacheFile, 0644);
         }
      }
 
