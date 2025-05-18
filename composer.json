@@ -8,6 +8,16 @@
         "plugin",
         "integration"
     ],
+    "autoload": {
+        "psr-4": {
+            "MauticPlugin\\AmazonSesBundle\\": ""
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "MauticPlugin\\AmazonSesBundle\\Tests\\": "Tests/"
+        }
+    },
     "extra": {
         "install-directory-name": "AmazonSesBundle"
     },
@@ -16,6 +26,10 @@
         "php": ">=8.0.0",
         "mautic/core-lib": "^5.0",
         "aws/aws-sdk-php": "~3.0"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^9.5",
+        "friendsofphp/php-cs-fixer": "^3.0"
     },
     "scripts": {
         "test": [
@@ -26,12 +40,12 @@
             "@unit",
             "@csfixer"
         ],
-        "phpunit": "../../bin/phpunit -d --bootstrap ../../vendor/autoload.php --configuration phpunit.xml --fail-on-warning --testsuite=all",
-        "unit": "../../bin/phpunit -d --bootstrap ../../vendor/autoload.php --configuration phpunit.xml --fail-on-warning --testsuite=unit",
-        "functional": "../../bin/phpunit -d --bootstrap ../../vendor/autoload.php --configuration phpunit.xml --fail-on-warning --testsuite=functional",
-        "coverage": "../../bin/phpunit -d --bootstrap ../../vendor/autoload.php --configuration phpunit.xml --fail-on-warning --testsuite=all --coverage-text --coverage-html=Tests/Coverage",
-        "csfixer": "../../bin/php-cs-fixer fix . -v --dry-run --diff --using-cache=no --config=../../.php-cs-fixer.php",
-        "fixcs": "../../bin/php-cs-fixer fix . -v --using-cache=no --config=../../.php-cs-fixer.php",
-        "phpstan": "[ ! -f ../../var/cache/test/AppKernelTestDebugContainer.xml ] && (echo 'Building test cache ...'; APP_ENV=test APP_DEBUG=1 ../../bin/console > /dev/null 2>&1); php -d memory_limit=4G ../../bin/phpstan analyse ."
+        "phpunit": "vendor/bin/phpunit --configuration phpunit.xml --fail-on-warning --testsuite=all",
+        "unit": "vendor/bin/phpunit --configuration phpunit.xml --fail-on-warning --testsuite=unit",
+        "functional": "vendor/bin/phpunit --configuration phpunit.xml --fail-on-warning --testsuite=functional",
+        "coverage": "vendor/bin/phpunit --configuration phpunit.xml --fail-on-warning --testsuite=all --coverage-text --coverage-html=Tests/Coverage",
+        "csfixer": "vendor/bin/php-cs-fixer fix . -v --dry-run --diff --using-cache=no --config=.php-cs-fixer.php",
+        "fixcs": "vendor/bin/php-cs-fixer fix . -v --using-cache=no --config=.php-cs-fixer.php",
+        "phpstan": "[ ! -f var/cache/test/AppKernelTestDebugContainer.xml ] && (echo 'Building test cache ...'; APP_ENV=test APP_DEBUG=1 bin/console > /dev/null 2>&1); php -d memory_limit=4G vendor/bin/phpstan analyse ."
     }
 }
