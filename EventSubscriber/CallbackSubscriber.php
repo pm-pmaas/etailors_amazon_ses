@@ -23,6 +23,7 @@ use Symfony\Component\EventDispatcher\EventSubscriberInterface;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\Mailer\Transport\Dsn;
 use Symfony\Contracts\HttpClient\HttpClientInterface;
+use Symfony\Contracts\HttpClient\Exception\TransportExceptionInterface;
 use Symfony\Contracts\Translation\TranslatorInterface;
 use Mautic\LeadBundle\Model\DoNotContact as DncModel;
 
@@ -171,7 +172,7 @@ class CallbackSubscriber implements EventSubscriberInterface
                     } else {
                         $reason = 'HTTP Code '.$response->getStatusCode().', '.$response->getContent();
                     }
-                } catch (TransferException $e) {
+                } catch (TransportExceptionInterface $e) {
                     $reason = $e->getMessage();
                 }
 
