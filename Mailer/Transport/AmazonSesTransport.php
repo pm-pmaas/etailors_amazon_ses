@@ -1,6 +1,6 @@
 <?php
 /*
- * @copyright       (c) 2024. e-tailors IP B.V. All rights reserverd
+ * @copyright       (c) 2024. e-tailors IP B.V. All rights reserved
  * @author          Paul Maas <p.maas@e-tailors.com>
  *
  * @link            https://www.e-tailors.com
@@ -284,11 +284,11 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
                 $payload['EmailTags'][] = ['Name' => $header->getKey(), 'Value' => $header->getValue()];
             } else {
                 switch ($header->getName()) {
-                    case 'X-SES-FEEDBACK-FORWARDNG-EMAIL-ADDRESS':
+                    case 'X-SES-FEEDBACK-FORWARDING-EMAIL-ADDRESS':
                         $payload['FeedbackForwardingEmailAddress'] = $header->getBodyAsString();
                         $sentMessage->getHeaders()->remove($header->getName());
                         break;
-                    case 'X-SES-FEEDBACK-FORWARDNG-EMAIL-ADDRESS-IDENTITYARN':
+                    case 'X-SES-FEEDBACK-FORWARDING-EMAIL-ADDRESS-IDENTITYARN':
                         $payload['FeedbackForwardingEmailAddressIdentityArn'] = $header->getBodyAsString();
                         $sentMessage->getHeaders()->remove($header->getName());
                         break;
