@@ -1,6 +1,6 @@
 <?php
 /*
- * @copyright       (c) 2024. e-tailors IP B.V. All rights reserverd
+ * @copyright       (c) 2024. e-tailors IP B.V. All rights reserved
  * @author          Paul Maas <p.maas@e-tailors.com>
  *
  * @link            https://www.e-tailors.com
