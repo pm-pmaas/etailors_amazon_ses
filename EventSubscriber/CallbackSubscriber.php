@@ -225,8 +225,9 @@ class CallbackSubscriber implements EventSubscriberInterface
                     $emailId           = $this->getEmailHeader($payload);
                     $bouncedRecipients = $payload['bounce']['bouncedRecipients'];
                     foreach ($bouncedRecipients as $bouncedRecipient) {
-                        $bounceCode = array_key_exists('diagnosticCode', $bouncedRecipient) ? $bouncedRecipient['diagnosticCode'] : 'unknown';
-                        $bounceCode .= ' AWS Bounce - Type: '.$payload['bounce']['bounceType'].'  Subtype: '.$payload['bounce']['bounceSubType'];
+                        $bounceSubType    = $payload['bounce']['bounceSubType'];
+                        $bounceDiagnostic = array_key_exists('diagnosticCode', $bouncedRecipient) ? $bouncedRecipient['diagnosticCode'] : 'unknown';
+                        $bounceCode       = 'AWS: '.$bounceSubType.': '.$bounceDiagnostic;
 
                         $this->transportCallback->addFailureByAddress($this->cleanupEmailAddress($bouncedRecipient['emailAddress']), $bounceCode, DoNotContact::BOUNCED, $emailId);
                         $this->logger->debug("Mark email '".$this->cleanupEmailAddress($bouncedRecipient['emailAddress'])."' as bounced, reason: ".$bounceCode);
