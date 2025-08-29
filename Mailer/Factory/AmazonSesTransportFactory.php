@@ -23,6 +23,8 @@ use Mautic\CoreBundle\Helper\PathsHelper;
 
 class AmazonSesTransportFactory extends AbstractTransportFactory
 {
+    const DEFAULT_RATE = 14;
+
     private static SesV2Client $amazonclient;
     private static TranslatorInterface $translator;
     private PathsHelper $pathsHelper;
@@ -71,12 +73,13 @@ class AmazonSesTransportFactory extends AbstractTransportFactory
                     $fetchedRate = (int)floor($account->get('SendQuota')['MaxSendRate']);
                     $this->saveSendRateToCache($cacheFile, $fetchedRate);
                 } catch (\Exception $e) {
+                    $this->saveSendRateToCache($cacheFile, self::DEFAULT_RATE);
                     $this->logger?->error('SES quota fetch failed: ' . $e->getMessage());
                     $fetchedRate = $this->getCachedSendRate($cacheFile, PHP_INT_MAX) ?? null;
                 }
             }
     
-            $effectiveRate = (int)($manualRate ?? $cachedRate ?? $fetchedRate ?? 14);
+            $effectiveRate = (int)($manualRate ?? $cachedRate ?? $fetchedRate ?? self::DEFAULT_RATE);;
     
             return new AmazonSesTransport(
                 $client,
