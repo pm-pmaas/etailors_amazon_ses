@@ -76,7 +76,7 @@ Your IAM user must have permission to send and get account limits. Here's an exa
        "Version": "2012-10-17",
        "Statement": [
            {
-               "Sid": "Allow Sending",
+               "Sid": "AllowSending",
                "Effect": "Allow",
                "Action": [
                    "ses:SendEmail",
