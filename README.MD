@@ -69,6 +69,33 @@ via IAM instead of upgrading an SMTP user with the permission: sending via SES A
    
    There are known issues when upgrading SMTP-only users — see: [issue #28](https://github.com/pm-pmaas/etailors_amazon_ses/issues/28).
 
+Your IAM user must have permission to send and get account limits. Here's an example policy that grants those permissions:
+
+   ```json
+   {
+       "Version": "2012-10-17",
+       "Statement": [
+           {
+               "Sid": "AllowSending",
+               "Effect": "Allow",
+               "Action": [
+                   "ses:SendEmail",
+                   "ses:SendBulkEmail"
+               ],
+               "Resource": "arn:aws:ses:*:<account id>:identity/*"
+           },
+           {
+               "Sid": "AllowGetAccount",
+               "Effect": "Allow",
+               "Action": [
+                   "ses:GetAccount"
+               ],
+               "Resource": "*"
+           }
+       ]
+   }
+   ```
+
 ### 4. Available Regions
 
 Below are the supported AWS SES regions:
