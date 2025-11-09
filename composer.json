@@ -1,6 +1,5 @@
 {
     "name": "etailors/mautic-amazon-ses",
-    "version": "1.0.25",
     "description": "Amazon SES Mailer Plugin for Mautic",
     "type": "mautic-plugin",
     "license": "GPL-3.0-or-later",

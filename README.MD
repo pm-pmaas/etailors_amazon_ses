@@ -44,8 +44,22 @@ Als je Composer gebruikt in je Mautic-installatie, kun je de plugin via Composer
 
 1. In de Mautic-root:
    ```bash
-   composer require etailors/mautic-amazon-ses:^1.0
+   composer require etailors/mautic-amazon-ses:^1.0.25 -W
    ```
+   - Tip: gebruik `-W` (alias `--update-with-all-dependencies`) zodat Composer gelockte afhankelijkheden kan bijwerken.
+   - Draai je Mautic 6? Zorg dat de PHP-extensie `imap` is geïnstalleerd/ingeschakeld voordat je Composer draait, anders kan `mautic/core-lib` 6.x niet worden opgelost.
+   - Heb je (nog) geen Packagist publicatie, gebruik dan een VCS-repository in de Mautic `composer.json`:
+     ```
+     {
+       "repositories": [
+         { "type": "vcs", "url": "https://github.com/pm-pmaas/etailors_amazon_ses" }
+       ]
+     }
+     ```
+     En installeer vervolgens:
+     ```bash
+     composer require etailors/mautic-amazon-ses:dev-main
+     ```
 
 2. Zorg dat Composer 2 plugins zijn toegestaan in de Mautic-root (meestal al zo):
    ```json
