@@ -11,6 +11,6 @@ declare(strict_types=1);
 return [
     'name'        => 'Amazon SES',
     'description' => 'Amazon SES Mailer Plugin for Mautic',
-    'version'     => '1.0.22',
+    'version'     => '1.0.25',
     'author'      => 'e-tailors Europe b.v.',
 ];
