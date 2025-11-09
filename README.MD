@@ -39,6 +39,33 @@ Feel free to suggest improvements or provide feedback — this is my first Mauti
 
 3. Go to **Mautic Settings > Plugins** and click the "Install/Update Plugins" button.
 
+### Install via Composer (alternatief)
+Als je Composer gebruikt in je Mautic-installatie, kun je de plugin via Composer installeren. Dit zorgt er automatisch voor dat de plugin in `plugins/AmazonSesBundle` wordt geplaatst.
+
+1. In de Mautic-root:
+   ```bash
+   composer require etailors/mautic-amazon-ses:^1.0
+   ```
+
+2. Zorg dat Composer 2 plugins zijn toegestaan in de Mautic-root (meestal al zo):
+   ```json
+   {
+     "config": {
+       "allow-plugins": {
+         "composer/installers": true
+       }
+     }
+   }
+   ```
+
+3. Leeg de cache hard en herlaad plugins:
+   ```bash
+   rm -rf var/cache/*
+   php bin/console mautic:plugins:reload
+   ```
+
+> Let op: dankzij `type: "mautic-plugin"` en `extra.install-directory-name: "AmazonSesBundle"` in deze plugin wordt de mapnaam automatisch juist gezet.
+
 ### 2. Configure Amazon SES Settings
 
 1. In Mautic, navigate to **Settings > Email Settings**.
