@@ -22,11 +22,12 @@
     "extra": {
         "install-directory-name": "AmazonSesBundle"
     },
-    "minimum-stability": "dev",
+    "prefer-stable": true,
     "require": {
         "php": ">=8.0.0",
         "mautic/core-lib": "^5.0 || ^6.0",
-        "aws/aws-sdk-php": "~3.0"
+        "composer/installers": "^2.0",
+        "aws/aws-sdk-php": "^3.0"
     },
     "require-dev": {
         "phpunit/phpunit": "^9.5",
