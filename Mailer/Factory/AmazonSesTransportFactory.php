@@ -26,6 +26,7 @@ class AmazonSesTransportFactory extends AbstractTransportFactory
     const DEFAULT_RATE = 14;
 
     private static SesV2Client $amazonclient;
+    private static string $clientSignature = '';
     private static TranslatorInterface $translator;
     private PathsHelper $pathsHelper;
     private EntityManagerInterface $entityManager;
@@ -220,7 +221,11 @@ class AmazonSesTransportFactory extends AbstractTransportFactory
             throw new InvalidArgumentException(self::$translator->trans('mautic.amazonses.plugin.ratelimit.invalid', [], 'validators'));
         }
 
-        if (!isset(self::$amazonclient)) {
+        // Build a signature of the critical DSN parts so we can detect runtime changes
+        $signature = hash('sha256', $dsn_user . ':' . $dsn_password . '@' . $dsn_region);
+
+        // If the client is not set yet OR the signature has changed, (re)create the client
+        if (!isset(self::$amazonclient) || self::$clientSignature !== $signature) {
             $config = [
                 'version'     => 'latest',
                 'credentials' => CredentialProvider::fromCredentials(new Credentials($dsn_user, $dsn_password)),
@@ -232,10 +237,8 @@ class AmazonSesTransportFactory extends AbstractTransportFactory
                 $config['handler'] = $handler;
             }
 
-            /*
-             * Check singleton.
-             */
             self::$amazonclient = new SesV2Client($config);
+            self::$clientSignature = $signature;
         }
     }
 
