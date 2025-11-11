@@ -8,6 +8,8 @@ This is a custom plugin inspired by the structure of:
 
 Feel free to suggest improvements or provide feedback — this is my first Mautic plugin and community contributions are welcome.
 
+---
+
 ## Features
 - Send emails through Amazon SES using the API.
 - Support for setting AWS regions and optional custom rate limits in the DSN.
@@ -24,6 +26,8 @@ Feel free to suggest improvements or provide feedback — this is my first Mauti
 
 ### 1. Download and Install the Plugin
 
+#### Install manual
+
 1. Download or clone the repository to your Mautic plugins directory:
 
    ```bash
@@ -31,54 +35,36 @@ Feel free to suggest improvements or provide feedback — this is my first Mauti
    git clone https://github.com/yourusername/mautic-aws-ses-plugin.git AmazonSesBundle
    ```
 
-2. Clear Mautic's cache:
+2. Clear Mautic’s cache:
    
    ```bash
    php /path/to/mautic/bin/console cache:clear
    ```
 
-3. Go to **Mautic Settings > Plugins** and click the "Install/Update Plugins" button.
+3. Go to **Mautic Settings > Plugins** and click the “Install/Update Plugins” button.
 
-### Install via Composer (alternatief)
-Als je Composer gebruikt in je Mautic-installatie, kun je de plugin via Composer installeren. Dit zorgt er automatisch voor dat de plugin in `plugins/AmazonSesBundle` wordt geplaatst.
+---
 
-1. In de Mautic-root:
-   ```bash
-   composer require etailors/mautic-amazon-ses:^1.0.25 -W
-   ```
-   - Tip: gebruik `-W` (alias `--update-with-all-dependencies`) zodat Composer gelockte afhankelijkheden kan bijwerken.
-   - Draai je Mautic 6? Zorg dat de PHP-extensie `imap` is geïnstalleerd/ingeschakeld voordat je Composer draait, anders kan `mautic/core-lib` 6.x niet worden opgelost.
-   - Heb je (nog) geen Packagist publicatie, gebruik dan een VCS-repository in de Mautic `composer.json`:
-     ```
-     {
-       "repositories": [
-         { "type": "vcs", "url": "https://github.com/pm-pmaas/etailors_amazon_ses" }
-       ]
-     }
-     ```
-     En installeer vervolgens:
-     ```bash
-     composer require etailors/mautic-amazon-ses:dev-main
-     ```
+#### Install via Composer
 
-2. Zorg dat Composer 2 plugins zijn toegestaan in de Mautic-root (meestal al zo):
-   ```json
-   {
-     "config": {
-       "allow-plugins": {
-         "composer/installers": true
-       }
-     }
-   }
-   ```
+If you prefer installing via Composer, run the following command from your Mautic root directory:
 
-3. Leeg de cache hard en herlaad plugins:
-   ```bash
-   rm -rf var/cache/*
-   php bin/console mautic:plugins:reload
-   ```
+```bash
+composer require etailors/mautic-amazon-ses:^1.0 -W 
+```
+Version number 
 
-> Let op: dankzij `type: "mautic-plugin"` en `extra.install-directory-name: "AmazonSesBundle"` in deze plugin wordt de mapnaam automatisch juist gezet.
+Then clear the cache and reload the plugins:
+
+```bash
+rm -rf var/cache/*
+php bin/console mautic:plugins:reload
+```
+
+> **Note:**  
+> The plugin will automatically install into `plugins/AmazonSesBundle`.
+
+---
 
 ### 2. Configure Amazon SES Settings
 
@@ -102,60 +88,65 @@ Als je Composer gebruikt in je Mautic-installatie, kun je de plugin via Composer
 
 ![Amazon SES Integration](https://github.com/pm-pmaas/etailors_amazon_ses/blob/1.0.1/Assets/img/mautic-ses-dsn.png)
 
+---
+
 ### 3. AWS SES Configuration
 
 1. Ensure that you have verified your domain and email addresses in AWS SES.
-2. Set up the appropriate IAM user with permissions to send emails via SES.  **Please make sure you create a new IAM user directly
-via IAM instead of upgrading an SMTP user with the permission: sending via SES API**.
-   
+2. Set up the appropriate IAM user with permissions to send emails via SES.  
+   **Please make sure you create a new IAM user directly via IAM instead of upgrading an SMTP user with the permission: sending via SES API.**
+
    There are known issues when upgrading SMTP-only users — see: [issue #28](https://github.com/pm-pmaas/etailors_amazon_ses/issues/28).
 
-Your IAM user must have permission to send and get account limits. Here's an example policy that grants those permissions:
+Your IAM user must have permission to send and get account limits. Here’s an example policy:
 
-   ```json
-   {
-       "Version": "2012-10-17",
-       "Statement": [
-           {
-               "Sid": "AllowSending",
-               "Effect": "Allow",
-               "Action": [
-                   "ses:SendEmail",
-                   "ses:SendBulkEmail"
-               ],
-               "Resource": "arn:aws:ses:*:<account id>:identity/*"
-           },
-           {
-               "Sid": "AllowGetAccount",
-               "Effect": "Allow",
-               "Action": [
-                   "ses:GetAccount"
-               ],
-               "Resource": "*"
-           }
-       ]
-   }
-   ```
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowSending",
+      "Effect": "Allow",
+      "Action": [
+        "ses:SendEmail",
+        "ses:SendBulkEmail"
+      ],
+      "Resource": "arn:aws:ses:*:<account id>:identity/*"
+    },
+    {
+      "Sid": "AllowGetAccount",
+      "Effect": "Allow",
+      "Action": [
+        "ses:GetAccount"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+```
+
+---
 
 ### 4. Available Regions
 
-Below are the supported AWS SES regions:
-
 ```
-us-east-1
-us-east-2
-ap-south-1
+af-south-1
+ap-northeast-1
 ap-northeast-2
+ap-south-1
 ap-southeast-1
 ap-southeast-2
-ap-northeast-1
 ca-central-1
 eu-central-1
+eu-north-1
 eu-west-1
 eu-west-2
-eu-north-1
 sa-east-1
+us-east-1
+us-east-2
 us-gov-west-1
+us-west-1
+us-west-2
 ```
 
 ---
@@ -173,7 +164,7 @@ To receive feedback from Amazon SES regarding bounces and complaints, you need t
    ```
 
 4. Ensure your topic sends notifications for bounces, complaints, and delivery status.
-5. Test your callback configuration by sending test emails and reviewing the logs in Mautic to ensure feedback is being processed correctly.
+5. Test your callback configuration by sending test emails and reviewing Mautic logs to verify feedback is processed correctly.
 
 ---
 
@@ -186,28 +177,29 @@ To avoid exceeding SES rate limits, this plugin automatically:
 - Throttles outgoing email API calls using `usleep()`.
 - Allows overriding the send rate via `ratelimit` DSN option.
 
-This prevents common errors like `TooManyRequests` while making the most of your quota.
+This prevents common errors like `TooManyRequests` while maximizing throughput.
 
 ---
 
 ## Debugging
 
-- To debug or troubleshoot any issues with email sending or SNS feedback processing, check Mautic's logs at:
-  
+- To troubleshoot email sending or SNS callback issues, check Mautic’s logs:
+
   ```
   /path/to/mautic/var/logs
   ```
 
-- You can also review the status of your emails and SNS callbacks within the **Amazon CloudWatch** service to monitor the performance of SES and SNS.
+- You can also monitor SES and SNS performance in **Amazon CloudWatch**.
 
 ---
 
 ## Contributions & Feedback
 
-This is my first Mautic plugin, so I’m open to any feedback or improvements. Feel free to open an issue or submit a pull request if you find a bug or have a feature request!
+This is my first Mautic plugin, so I’m open to any feedback or improvements.  
+Feel free to open an issue or submit a pull request if you find a bug or have a feature request!
 
 ---
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
