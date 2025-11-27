@@ -275,9 +275,13 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
     {
         $fromAddress = $sentMessage->getFrom()[0];
         $name = trim($fromAddress->getName());
-        $payload['FromEmailAddress'] = $name !== ''
-            ? "$name <{$fromAddress->getAddress()}>"
-            : $fromAddress->getAddress();
+
+        if ($name !== '') {
+            $safeName = str_replace('"', '\"', $name);
+            $payload['FromEmailAddress'] = sprintf('"%s" <%s>', $safeName, $fromAddress->getAddress());
+        } else {
+            $payload['FromEmailAddress'] = $fromAddress->getAddress();
+        }
 
         $payload['ReplyToAddresses'] = $this->stringifyAddresses($this->setReplyTo($sentMessage));
 
