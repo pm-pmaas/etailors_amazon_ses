@@ -1,6 +1,6 @@
 # Mautic AWS SES Plugin with SNS Callback
 
-This plugin provides integration between [Mautic 5](https://www.mautic.org) and [Amazon SES](https://aws.amazon.com/ses/) for sending emails through AWS. It also integrates with [Amazon SNS](https://aws.amazon.com/sns/) for handling email feedback such as bounces and complaints via callbacks.
+This plugin provides integration between [Mautic 5+](https://www.mautic.org) and [Amazon SES](https://aws.amazon.com/ses/) for sending emails through AWS. It also integrates with [Amazon SNS](https://aws.amazon.com/sns/) for handling email feedback such as bounces and complaints via callbacks.
 
 This is a custom plugin inspired by the structure of:
 - [mabumusa1/ses-plugin](https://github.com/mabumusa1/ses-plugin)
