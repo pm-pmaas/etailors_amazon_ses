@@ -15,6 +15,7 @@ use Mautic\EmailBundle\EmailEvents;
 use Mautic\EmailBundle\Event\TransportWebhookEvent;
 use Mautic\EmailBundle\Model\TransportCallback;
 use Mautic\LeadBundle\Entity\DoNotContact;
+use Mautic\LeadBundle\Model\LeadModel;
 use MauticPlugin\AmazonSesBundle\Mailer\Transport\AmazonSesTransport;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\EventDispatcher\EventSubscriberInterface;
@@ -23,6 +24,10 @@ use Symfony\Component\Mailer\Transport\Dsn;
 use Symfony\Contracts\HttpClient\Exception\TransportExceptionInterface;
 use Symfony\Contracts\HttpClient\HttpClientInterface;
 use Symfony\Contracts\Translation\TranslatorInterface;
+use Mautic\LeadBundle\Entity\DoNotContact as DNC;
+use Mautic\EmailBundle\MonitoredEmail\Search\ContactFinder;
+use Mautic\LeadBundle\Model\DoNotContact as DncModel;
+
 
 class CallbackSubscriber implements EventSubscriberInterface
 {
@@ -36,6 +41,9 @@ class CallbackSubscriber implements EventSubscriberInterface
         private TransportCallback $transportCallback,
         private CoreParametersHelper $coreParametersHelper,
         private HttpClientInterface $client,
+        private ContactFinder                         $finder,
+        private DncModel                             $dncModel,
+        private LeadModel $leadModel,
         TranslatorInterface $translator,
         ?LoggerInterface $logger = null,
     ) {
@@ -233,18 +241,7 @@ class CallbackSubscriber implements EventSubscriberInterface
 
             case 'Bounce':
                 $typeFound = true;
-                if ('Permanent' == $payload['bounce']['bounceType']) {
-                    $emailId           = $this->getEmailHeader($payload);
-                    $bouncedRecipients = $payload['bounce']['bouncedRecipients'];
-                    foreach ($bouncedRecipients as $bouncedRecipient) {
-                        $bounceSubType    = $payload['bounce']['bounceSubType'];
-                        $bounceDiagnostic = array_key_exists('diagnosticCode', $bouncedRecipient) ? $bouncedRecipient['diagnosticCode'] : 'unknown';
-                        $bounceCode       = 'AWS: '.$bounceSubType.': '.$bounceDiagnostic;
-
-                        $this->transportCallback->addFailureByAddress($this->cleanupEmailAddress($bouncedRecipient['emailAddress']), $bounceCode, DoNotContact::BOUNCED, $emailId);
-                        $this->logger->debug("Mark email '".$this->cleanupEmailAddress($bouncedRecipient['emailAddress'])."' as bounced, reason: ".$bounceCode);
-                    }
-                }
+                $this->addFailureByAddressCustom($payload);
                 break;
             default:
                 $this->logger->warning(
@@ -270,6 +267,63 @@ class CallbackSubscriber implements EventSubscriberInterface
             'message'  => $message,
         ];
     }
+
+    private function addFailureByAddressCustom(array $payload): void
+    {
+        $type = $payload['bounce']['bounceType'];
+        $typeName = 'OTHER';
+        $channel = 'email';
+        if ('Permanent' === $type) {
+            $typeName = 'HARD';
+        } elseif ('Transient' === $type) {
+            $typeName = 'SOFT';
+            $channel = 'soft bounce';
+        }
+        $emailId = $this->getEmailHeader($payload);
+        $bouncedRecipients = $payload['bounce']['bouncedRecipients'];
+        foreach ($bouncedRecipients as $bouncedRecipient) {
+            $bounceSubType = $payload['bounce']['bounceSubType'];
+            $bounceDiagnostic = array_key_exists('diagnosticCode', $bouncedRecipient) ? $bouncedRecipient['diagnosticCode'] : 'unknown';
+            $bounceCode = $typeName.': AWS: '.$bounceSubType.': '.$bounceDiagnostic;
+            $channelWithId = [$channel => $emailId];
+            $this->addFailureByAddress($this->cleanupEmailAddress($bouncedRecipient['emailAddress']),$bounceCode,DoNotContact::BOUNCED,$channelWithId);
+            $this->logger->debug("Mark email '" . $bouncedRecipient['emailAddress'] . "' as bounced, reason: " . $bounceCode);
+        }
+    }
+
+    /**
+     * @param string   $address
+     * @param string   $comments
+     * @param int      $dncReason
+     * @param int|null $channelId
+     */
+    public function addFailureByAddress($address, $comments, $dncReason = DNC::BOUNCED, $channel = null): void
+    {
+        $result = $this->finder->findByAddress($address);
+
+        if ($contacts = $result->getContacts()) {
+            foreach ($contacts as $contact) {
+                $channel = ($channel) ?: 'email';
+                $updateDncEntry = is_array($channel) && key($channel) === 'soft bounce';
+                if (!$updateDncEntry) {
+                    $this->dncModel->addDncForContact($contact->getId(), $channel, $dncReason, $comments);
+
+                }
+                $dncEntities = $contact->getDoNotContact();
+                $channelName = is_array($channel) ? key($channel) : $channel;
+                foreach ($dncEntities as $dnc) {
+                    $allowOverride = DNC::UNSUBSCRIBED !== $dnc->getReason();
+                    if ($allowOverride && $dnc->getChannel() === $channelName) {
+                        $this->dncModel->updateDncRecord($dnc, $contact, $channelName, $dncReason, $comments);
+                        $this->leadModel->saveEntity($contact);
+
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
 
     /**
      * Validate that the provided URL is a legitimate AWS SNS ConfirmSubscription endpoint.
