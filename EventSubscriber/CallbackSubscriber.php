@@ -261,7 +261,8 @@ class CallbackSubscriber implements EventSubscriberInterface
             );
         }
 
-        $this->logger?->debug('end processJsonPayload:'.$message);
+        $this->logger?->debug('end processJsonPayload:');
+        $this->logger?->debug(json_encode($message));
 
 
         return [
