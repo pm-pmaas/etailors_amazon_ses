@@ -150,7 +150,7 @@ class CallbackSubscriber implements EventSubscriberInterface
     public function processJsonPayload(array $payload, $type): array
     {
 
-        $this->logger?->warning('Start processJsonPayload:');
+        $this->logger?->debug('Start processJsonPayload:');
 
         $typeFound = false;
         $hasError  = false;
@@ -260,6 +260,9 @@ class CallbackSubscriber implements EventSubscriberInterface
                 $type
             );
         }
+
+        $this->logger?->debug('end processJsonPayload:'.$message);
+
 
         return [
             'hasError' => $hasError,
