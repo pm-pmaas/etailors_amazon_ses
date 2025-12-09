@@ -306,14 +306,13 @@ class CallbackSubscriber implements EventSubscriberInterface
         if (!$trustedHost) {
             return false;
         }
-
         // Best-effort: ensure the query indicates ConfirmSubscription
-        /*if (isset($parts['query'])) {
+        if (isset($parts['query'])) {
             parse_str($parts['query'], $query);
             if (isset($query['Action']) && strtolower((string) $query['Action']) === 'confirmsubscription') {
                 return true;
             }
-        }*/
+        }
 
         // Some endpoints might use POST forms or different casing; be conservative and require the query param
         return false;
