@@ -58,6 +58,7 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
         'eu-central-1'   => 'eu-central-1',
         'eu-west-1'      => 'eu-west-1',
         'eu-west-2'      => 'eu-west-2',
+        'eu-west-3'      => 'eu-west-3',
         'eu-north-1'     => 'eu-north-1',
         'sa-east-1'      => 'sa-east-1',
         'us-gov-west-1'  => 'us-gov-west-1',
@@ -274,14 +275,10 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
     private function addSesHeaders(&$payload, MauticMessage &$sentMessage, array $mailData): void
     {
         $fromAddress = $sentMessage->getFrom()[0];
-        $name = trim($fromAddress->getName());
-
-        if ($name !== '') {
-            $safeName = str_replace('"', '\"', $name);
-            $payload['FromEmailAddress'] = sprintf('"%s" <%s>', $safeName, $fromAddress->getAddress());
-        } else {
-            $payload['FromEmailAddress'] = $fromAddress->getAddress();
-        }
+        $encodedName = $fromAddress->getEncodedName();
+        $payload['FromEmailAddress'] = $encodedName !== ''
+            ? "$encodedName <{$fromAddress->getEncodedAddress()}>"
+            : $fromAddress->getEncodedAddress();
 
         $payload['ReplyToAddresses'] = $this->stringifyAddresses($this->setReplyTo($sentMessage));
 

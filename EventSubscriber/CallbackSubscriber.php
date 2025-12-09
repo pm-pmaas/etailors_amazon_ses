@@ -149,6 +149,9 @@ class CallbackSubscriber implements EventSubscriberInterface
      */
     public function processJsonPayload(array $payload, $type): array
     {
+
+        $this->logger?->debug('Start processJsonPayload:');
+
         $typeFound = false;
         $hasError  = false;
         $message   = 'PROCESSED';
@@ -160,7 +163,16 @@ class CallbackSubscriber implements EventSubscriberInterface
 
                 // Confirm Amazon SNS subscription by calling back the SubscribeURL from the playload
                 try {
-                    $response = $this->client->request('GET', $payload['SubscribeURL']);
+                    $subscribeUrl = $payload['SubscribeURL'] ?? '';
+
+                    // Validate the SubscribeURL to mitigate SSRF. Only allow HTTPS SNS endpoints on amazonaws.com / amazonaws.com.cn
+                    if (!$this->isTrustedAwsSnsUrl($subscribeUrl)) {
+                        $reason = 'Untrusted SubscribeURL host';
+                        $this->logger?->warning('Rejected SNS SubscribeURL due to untrusted host', ['url' => $subscribeUrl]);
+                        break;
+                    }
+
+                    $response = $this->client->request('GET', $subscribeUrl);
                     if (200 == $response->getStatusCode()) {
                         $this->logger->info('Callback to SubscribeURL from Amazon SNS successfully');
                         break;
@@ -249,10 +261,68 @@ class CallbackSubscriber implements EventSubscriberInterface
             );
         }
 
+        $this->logger?->debug('end processJsonPayload:');
+        $this->logger?->debug(json_encode($message));
+
+
         return [
             'hasError' => $hasError,
             'message'  => $message,
         ];
+    }
+
+    /**
+     * Validate that the provided URL is a legitimate AWS SNS ConfirmSubscription endpoint.
+     *
+     * Rules:
+     * - Must be HTTPS
+     * - Host must match sns(.<region>).amazonaws.com or sns(.<region>).amazonaws.com.cn
+     * - Disallow IP literals and localhost/userinfo
+     * - Query should include Action=ConfirmSubscription (best‑effort)
+     */
+    private function isTrustedAwsSnsUrl(string $url): bool
+    {
+        if ('' === $url) {
+            return false;
+        }
+
+        $parts = parse_url($url);
+        if (false === $parts || !isset($parts['scheme'], $parts['host'])) {
+            return false;
+        }
+
+        // Require HTTPS
+        if (strtolower($parts['scheme']) !== 'https') {
+            return false;
+        }
+
+        // No user info allowed
+        if (isset($parts['user']) || isset($parts['pass'])) {
+            return false;
+        }
+
+        $host = strtolower($parts['host']);
+
+        // Disallow IPs and localhost
+        if ($host === 'localhost' || filter_var($host, FILTER_VALIDATE_IP)) {
+            return false;
+        }
+
+        // Trusted SNS domains: sns.amazonaws.com, sns.<region>.amazonaws.com, and same with .cn
+        $trustedHost = (bool) preg_match('/^sns(\.[a-z0-9-]+)?\.amazonaws\.com(\.cn)?$/', $host);
+        if (!$trustedHost) {
+            return false;
+        }
+        // Best-effort: ensure the query indicates ConfirmSubscription
+        if (isset($parts['query'])) {
+            parse_str($parts['query'], $query);
+            if (isset($query['Action']) && strtolower((string) $query['Action']) === 'confirmsubscription') {
+                return true;
+            }
+        }
+
+        // Some endpoints might use POST forms or different casing; be conservative and require the query param
+        return false;
     }
 
     public function cleanupEmailAddress($email)
