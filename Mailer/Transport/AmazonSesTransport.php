@@ -274,14 +274,10 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
     private function addSesHeaders(&$payload, MauticMessage &$sentMessage, array $mailData): void
     {
         $fromAddress = $sentMessage->getFrom()[0];
-        $name = trim($fromAddress->getName());
-
-        if ($name !== '') {
-            $safeName = str_replace('"', '\"', $name);
-            $payload['FromEmailAddress'] = sprintf('"%s" <%s>', $safeName, $fromAddress->getAddress());
-        } else {
-            $payload['FromEmailAddress'] = $fromAddress->getAddress();
-        }
+        $encodedName = $fromAddress->getEncodedName();
+        $payload['FromEmailAddress'] = $encodedName !== ''
+            ? "$encodedName <{$fromAddress->getEncodedAddress()}>"
+            : $fromAddress->getEncodedAddress();
 
         $payload['ReplyToAddresses'] = $this->stringifyAddresses($this->setReplyTo($sentMessage));
 
