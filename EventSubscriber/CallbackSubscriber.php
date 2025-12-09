@@ -149,6 +149,9 @@ class CallbackSubscriber implements EventSubscriberInterface
      */
     public function processJsonPayload(array $payload, $type): array
     {
+
+        $this->logger?->warning('Start processJsonPayload:');
+
         $typeFound = false;
         $hasError  = false;
         $message   = 'PROCESSED';
