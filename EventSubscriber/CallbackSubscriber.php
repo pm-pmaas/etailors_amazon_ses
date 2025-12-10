@@ -14,7 +14,11 @@ use Mautic\CoreBundle\Helper\CoreParametersHelper;
 use Mautic\EmailBundle\EmailEvents;
 use Mautic\EmailBundle\Event\TransportWebhookEvent;
 use Mautic\EmailBundle\Model\TransportCallback;
+use Mautic\EmailBundle\MonitoredEmail\Search\ContactFinder;
 use Mautic\LeadBundle\Entity\DoNotContact;
+use Mautic\LeadBundle\Entity\DoNotContact as DNC;
+use Mautic\LeadBundle\Entity\Lead;
+use Mautic\LeadBundle\Model\DoNotContact as DncModel;
 use Mautic\LeadBundle\Model\LeadModel;
 use MauticPlugin\AmazonSesBundle\Mailer\Transport\AmazonSesTransport;
 use Psr\Log\LoggerInterface;
@@ -24,10 +28,6 @@ use Symfony\Component\Mailer\Transport\Dsn;
 use Symfony\Contracts\HttpClient\Exception\TransportExceptionInterface;
 use Symfony\Contracts\HttpClient\HttpClientInterface;
 use Symfony\Contracts\Translation\TranslatorInterface;
-use Mautic\LeadBundle\Entity\DoNotContact as DNC;
-use Mautic\EmailBundle\MonitoredEmail\Search\ContactFinder;
-use Mautic\LeadBundle\Model\DoNotContact as DncModel;
-
 
 class CallbackSubscriber implements EventSubscriberInterface
 {
@@ -41,8 +41,8 @@ class CallbackSubscriber implements EventSubscriberInterface
         private TransportCallback $transportCallback,
         private CoreParametersHelper $coreParametersHelper,
         private HttpClientInterface $client,
-        private ContactFinder                         $finder,
-        private DncModel                             $dncModel,
+        private ContactFinder $finder,
+        private DncModel $dncModel,
         private LeadModel $leadModel,
         TranslatorInterface $translator,
         ?LoggerInterface $logger = null,
@@ -157,7 +157,6 @@ class CallbackSubscriber implements EventSubscriberInterface
      */
     public function processJsonPayload(array $payload, $type): array
     {
-
         $this->logger?->debug('Start processJsonPayload:');
 
         $typeFound = false;
@@ -261,7 +260,6 @@ class CallbackSubscriber implements EventSubscriberInterface
         $this->logger?->debug('end processJsonPayload:');
         $this->logger?->debug(json_encode($message));
 
-
         return [
             'hasError' => $hasError,
             'message'  => $message,
@@ -292,10 +290,9 @@ class CallbackSubscriber implements EventSubscriberInterface
     }
 
     /**
-     * @param string   $address
-     * @param string   $comments
-     * @param int      $dncReason
-     * @param int|null $channelId
+     * @param string $address
+     * @param string $comments
+     * @param int    $dncReason
      */
     public function addFailureByAddress($address, $comments, $dncReason = DNC::BOUNCED, $channel = null): void
     {
@@ -304,26 +301,31 @@ class CallbackSubscriber implements EventSubscriberInterface
         if ($contacts = $result->getContacts()) {
             foreach ($contacts as $contact) {
                 $channel = ($channel) ?: 'email';
-                $updateDncEntry = is_array($channel) && key($channel) === 'soft bounce';
-                if (!$updateDncEntry) {
+                if (is_array($channel) && 'soft bounce' === key($channel)) {
+                    $this->updateSoftBounceDncEntry($contact, $channel, $dncReason, $comments);
+                } else {
                     $this->dncModel->addDncForContact($contact->getId(), $channel, $dncReason, $comments);
-
-                }
-                $dncEntities = $contact->getDoNotContact();
-                $channelName = is_array($channel) ? key($channel) : $channel;
-                foreach ($dncEntities as $dnc) {
-                    $allowOverride = DNC::UNSUBSCRIBED !== $dnc->getReason();
-                    if ($allowOverride && $dnc->getChannel() === $channelName) {
-                        $this->dncModel->updateDncRecord($dnc, $contact, $channelName, $dncReason, $comments);
-                        $this->leadModel->saveEntity($contact);
-
-                        break;
-                    }
                 }
             }
         }
     }
 
+    private function updateSoftBounceDncEntry(Lead $contact, $channel, int $dncReason, string $comments): void
+    {
+        $dncEntities = $contact->getDoNotContact();
+        if ($dncEntities->isEmpty()) {
+            $this->dncModel->addDncForContact($contact->getId(), $channel, $dncReason, $comments);
+
+            return;
+        }
+        foreach ($dncEntities as $dnc) {
+            if ('soft bounce' === $dnc->getChannel()) {
+                $this->dncModel->updateDncRecord($dnc, $contact, 'soft bounce', $channel, $dncReason, $comments);
+                $this->leadModel->saveEntity($contact);
+                break;
+            }
+        }
+    }
 
     /**
      * Validate that the provided URL is a legitimate AWS SNS ConfirmSubscription endpoint.
@@ -346,7 +348,7 @@ class CallbackSubscriber implements EventSubscriberInterface
         }
 
         // Require HTTPS
-        if (strtolower($parts['scheme']) !== 'https') {
+        if ('https' !== strtolower($parts['scheme'])) {
             return false;
         }
 
