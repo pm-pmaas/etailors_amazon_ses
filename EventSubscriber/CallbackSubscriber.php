@@ -243,9 +243,12 @@ class CallbackSubscriber implements EventSubscriberInterface
                 $this->addFailureByAddressCustom($payload);
                 break;
             default:
-                $this->logger->warning(
+                $typeForLog = $payload['Type']
+                    ?? ($payload['eventType'] ?? ($payload['notificationType'] ?? 'unknown'));
+
+                $this->logger?->warning(
                     'SES webhook payload, not processed due to unknown type.',
-                    ['Type' => $payload['Type'], 'payload' => json_encode($payload)]
+                    ['Type' => $typeForLog, 'payload' => json_encode($payload)]
                 );
                 break;
         }
