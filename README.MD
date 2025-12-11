@@ -204,3 +204,9 @@ Feel free to open an issue or submit a pull request if you find a bug or have a 
 ## License
 
 This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
+
+---
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for release notes. Notably, version 1.0.28 includes a security fix validating the Amazon SNS subscription confirmation endpoint.
