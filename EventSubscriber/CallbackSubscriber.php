@@ -305,7 +305,7 @@ class CallbackSubscriber implements EventSubscriberInterface
             foreach ($contacts as $contact) {
                 $channel = ($channel) ?: 'email';
                 if (is_array($channel) && 'soft bounce' === key($channel)) {
-                    $this->updateSoftBounceDncEntry($contact, $channel, $dncReason, $comments);
+                    $this->addSoftBounceDncEntry($contact, $channel, $dncReason, $comments);
                 } else {
                     $this->dncModel->addDncForContact($contact->getId(), $channel, $dncReason, $comments);
                 }
@@ -313,20 +313,21 @@ class CallbackSubscriber implements EventSubscriberInterface
         }
     }
 
-    private function updateSoftBounceDncEntry(Lead $contact, $channel, int $dncReason, string $comments): void
+    private function addSoftBounceDncEntry(Lead $contact, $channel, int $dncReason, string $comments): void
     {
-        $dncEntities = $contact->getDoNotContact();
-        if ($dncEntities->isEmpty()) {
-            $this->dncModel->addDncForContact($contact->getId(), $channel, $dncReason, $comments);
-
-            return;
-        }
+        $dncEntities       = $contact->getDoNotContact();
+        $softBounceUpdated = false;
         foreach ($dncEntities as $dnc) {
             if ('soft bounce' === $dnc->getChannel()) {
-                $this->dncModel->updateDncRecord($dnc, $contact, 'soft bounce', $channel, $dncReason, $comments);
+                $this->dncModel->updateDncRecord($dnc, $contact, 'soft bounce', $dncReason, $comments);
                 $this->leadModel->saveEntity($contact);
+                $softBounceUpdated = true;
                 break;
             }
+        }
+
+        if (!$softBounceUpdated) {
+            $this->dncModel->addDncForContact($contact->getId(), $channel, $dncReason, $comments);
         }
     }
 
