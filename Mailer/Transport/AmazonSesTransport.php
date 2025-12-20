@@ -56,6 +56,7 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
         'ap-northeast-1' => 'ap-northeast-1',
         'ca-central-1'   => 'ca-central-1',
         'eu-central-1'   => 'eu-central-1',
+        'eu-central-2'   => 'eu-central-2',
         'eu-west-1'      => 'eu-west-1',
         'eu-west-2'      => 'eu-west-2',
         'eu-west-3'      => 'eu-west-3',
