@@ -22,6 +22,9 @@ use Mautic\EmailBundle\Mailer\Transport\TokenTransportInterface;
 use Mautic\EmailBundle\Mailer\Transport\TokenTransportTrait;
 use Psr\EventDispatcher\EventDispatcherInterface;
 use Psr\Log\LoggerInterface;
+use Psr\Log\LogLevel;
+use Monolog\Logger;
+use Monolog\Handler\StreamHandler;
 use Symfony\Component\Mailer\Exception\TransportException;
 use Symfony\Component\Mailer\Header\MetadataHeader;
 use Symfony\Component\Mailer\SentMessage;
@@ -94,6 +97,8 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
     private SesV2Client $client;
     private EventDispatcherInterface $dispatcher;
     private LoggerInterface $logger;
+    private ?LoggerInterface $sesLogger = null;
+    private ?string $correlationId = null;
 
     private array $settings;
 
@@ -113,6 +118,8 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
         $this->pathsHelper = $pathsHelper;
         $this->settings   = $settings;
 
+        $this->initSesLogger();
+
         /*
          * Since symfony/mailer is transactional by default, we need to set the max send rate to 1
          * to avoid sending multiple emails at once.
@@ -121,6 +128,71 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
          * This transport SHOULD NOT RUN IN PARALLEL.
          */
         $this->setMaxPerSecond(1);
+    }
+
+    private function initSesLogger(): void
+    {
+        $logPath = $this->settings['logPath'] ?? null;
+        if ($logPath) {
+            try {
+                $this->sesLogger = new Logger('ses_transport', [new StreamHandler($logPath)]);
+            } catch (\Exception $e) {
+                $this->logger->error('Failed to initialize SES custom logger: '.$e->getMessage());
+                $this->sesLogger = $this->logger;
+            }
+        } else {
+            $this->sesLogger = $this->logger;
+        }
+    }
+
+    private function logSes(string $level, string $message, array $context = []): void
+    {
+        $configLevel = $this->settings['logLevel'] ?? 'ERROR';
+        $levels = [
+            'TRACE' => 0,
+            'DEBUG' => 1,
+            'INFO'  => 2,
+            'ERROR' => 3,
+            'OFF'   => 4,
+        ];
+
+        $currentLevelValue = $levels[strtoupper($level)] ?? 3;
+        $configLevelValue = $levels[$configLevel] ?? 3;
+
+        if ($currentLevelValue < $configLevelValue) {
+            return;
+        }
+
+        $context['correlation_id'] = $this->correlationId;
+        $context['context'] = PHP_SAPI === 'cli' ? 'CLI' : 'WEB';
+
+        $psrLevel = match (strtoupper($level)) {
+            'TRACE', 'DEBUG' => LogLevel::DEBUG,
+            'INFO' => LogLevel::INFO,
+            'ERROR' => LogLevel::ERROR,
+            default => LogLevel::DEBUG,
+        };
+
+        if ($this->settings['maskSensitive'] ?? true) {
+            if (isset($context['recipient'])) {
+                $context['recipient'] = $this->maskEmail($context['recipient']);
+            }
+            if (isset($context['recipients'])) {
+                $context['recipients'] = array_map([$this, 'maskEmail'], (array) $context['recipients']);
+            }
+        }
+
+        $this->sesLogger?->log($psrLevel, $message, $context);
+    }
+
+    private function maskEmail(string $email): string
+    {
+        if (strpos($email, '@') === false) {
+            return $email;
+        }
+        [$user, $domain] = explode('@', $email);
+        $maskedUser = substr($user, 0, 1).str_repeat('*', max(0, strlen($user) - 2)).substr($user, -1);
+        return $maskedUser.'@'.$domain;
     }
 
     public function __toString(): string
@@ -139,7 +211,10 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
 
     protected function doSend(SentMessage $message): void
     {
-        $this->logger->debug('inDosendfunction');
+        $this->correlationId = bin2hex(random_bytes(8));
+        $this->logSes('DEBUG', 'Starting doSend', [
+            'email_subject' => $message->getOriginalMessage()->getSubject(),
+        ]);
 
         try {
             $email = $message->getOriginalMessage();
@@ -151,6 +226,11 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
 
             $this->message = $email;
             $this->envelope = $message->getEnvelope();
+
+            $emailId = $this->getEmailIdFromMetadata($email->getMetadata());
+            $this->logSes('DEBUG', 'Processing Mautic message', [
+                'mautic_email_id' => $emailId,
+            ]);
 
             // Use centralized method for updating From address
             $this->updateEmailFields($email);
@@ -185,13 +265,33 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
 
                     $pool = new CommandPool($this->client, $batchCommands, [
                         'concurrency' => count($batchCommands),
-                        'fulfilled' => function (Result $result, $iteratorId) {
+                        'fulfilled' => function (Result $result, $iteratorId) use ($batchCommands) {
+                            $data = $batchCommands[$iteratorId]->toArray();
+                            $recipient = $data['Destination']['ToAddresses'][0] ?? 'unknown';
+
+                            $meta = $this->getMetadata();
+                            $contactId = $meta[$recipient]['contactId'] ?? $meta[$recipient]['leadId'] ?? null;
+
+                            $this->logSes('INFO', 'Email sent successfully', [
+                                'recipient' => $recipient,
+                                'contact_id' => $contactId,
+                                'message_id' => $result->get('MessageId'),
+                            ]);
                         },
                         'rejected' => function (AwsException $reason, $iteratorId) use ($batchCommands, &$batchFailures) {
                             $batchFailures[] = $batchCommands[$iteratorId];
                             $data = $batchCommands[$iteratorId]->toArray();
-                            $this->logger->error('Rejected: message to '.implode(',', $data['Destination']['ToAddresses']));
-                            $this->logger->error('AWS SES Error: '.$reason->getMessage());
+                            $recipient = $data['Destination']['ToAddresses'][0] ?? 'unknown';
+
+                            $meta = $this->getMetadata();
+                            $contactId = $meta[$recipient]['contactId'] ?? $meta[$recipient]['leadId'] ?? null;
+
+                            $this->logSes('ERROR', 'Email rejected', [
+                                'recipient' => $recipient,
+                                'contact_id' => $contactId,
+                                'error' => $reason->getAwsErrorMessage() ?: $reason->getMessage(),
+                                'error_type' => $reason->getAwsErrorCode(),
+                            ]);
                         },
                     ]);
 
@@ -203,10 +303,11 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
                         $initialFailCount = count($batchFailures);
                         $retryDelay = 1000000;
                         for ($attempt = 1; $attempt <= 3 && !empty($batchFailures); $attempt++) {
-                            $this->logger->error(sprintf(
-                                '%d SES sends failed, inline retry %d/3 after %dms',
-                                count($batchFailures), $attempt, $retryDelay / 1000
-                            ));
+                            $this->logSes('INFO', "Retrying SES failures", [
+                                'failed_count' => count($batchFailures),
+                                'attempt' => $attempt,
+                                'delay_ms' => $retryDelay / 1000,
+                            ]);
                             usleep($retryDelay);
                             $retryDelay *= 2;
 
@@ -214,35 +315,50 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
                             $batchFailures = [];
                             $retryPool = new CommandPool($this->client, $retryCommands, [
                                 'concurrency' => count($retryCommands),
-                                'fulfilled' => function (Result $result, $iteratorId) {
+                                'fulfilled' => function (Result $result, $iteratorId) use ($retryCommands) {
+                                    $data = $retryCommands[$iteratorId]->toArray();
+                                    $recipient = $data['Destination']['ToAddresses'][0] ?? 'unknown';
+
+                                    $meta = $this->getMetadata();
+                                    $contactId = $meta[$recipient]['contactId'] ?? $meta[$recipient]['leadId'] ?? null;
+
+                                    $this->logSes('INFO', 'Email sent successfully on retry', [
+                                        'recipient' => $recipient,
+                                        'contact_id' => $contactId,
+                                        'message_id' => $result->get('MessageId'),
+                                    ]);
                                 },
                                 'rejected' => function (AwsException $reason, $iteratorId) use ($retryCommands, &$batchFailures) {
                                     $batchFailures[] = $retryCommands[$iteratorId];
                                     $data = $retryCommands[$iteratorId]->toArray();
-                                    $this->logger->error(sprintf(
-                                        'Retry rejected: %s — %s',
-                                        $data['Destination']['ToAddresses'][0],
-                                        $reason->getAwsErrorMessage() ?: $reason->getMessage()
-                                    ));
+                                    $recipient = $data['Destination']['ToAddresses'][0] ?? 'unknown';
+
+                                    $meta = $this->getMetadata();
+                                    $contactId = $meta[$recipient]['contactId'] ?? $meta[$recipient]['leadId'] ?? null;
+
+                                    $this->logSes('ERROR', 'Email retry rejected', [
+                                        'recipient' => $recipient,
+                                        'contact_id' => $contactId,
+                                        'error' => $reason->getAwsErrorMessage() ?: $reason->getMessage(),
+                                        'error_type' => $reason->getAwsErrorCode(),
+                                    ]);
                                 },
                             ]);
                             $retryPool->promise()->wait();
 
                             if (empty($batchFailures)) {
-                                $this->logger->error(sprintf(
-                                    'All %d recovered on retry %d/3',
-                                    count($retryCommands), $attempt
-                                ));
+                                $this->logSes('INFO', 'All messages recovered on retry', ['attempt' => $attempt]);
                                 break;
                             }
                         }
 
                         $recovered = $initialFailCount - count($batchFailures);
                         if ($recovered > 0) {
-                            $this->logger->error(sprintf(
-                                '%d/%d recovered by inline retry, %d permanently failed',
-                                $recovered, $initialFailCount, count($batchFailures)
-                            ));
+                            $this->logSes('INFO', 'Inline retry recovery results', [
+                                'recovered' => $recovered,
+                                'initial_failed' => $initialFailCount,
+                                'permanent_failed' => count($batchFailures),
+                            ]);
                         }
                         foreach ($batchFailures as $failedCmd) {
                             $data = $failedCmd->toArray();
@@ -307,6 +423,12 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
                 $sentMessage->updateLeadIdHash($mailData['hashId']);
                 $sentMessage->to(new Address($recipient, $mailData['name'] ?? ''));
 
+                $this->logSes('TRACE', 'Preparing tokenized email', [
+                    'recipient'  => $recipient,
+                    'contact_id' => $mailData['contactId'] ?? null,
+                    'lead_id'    => $mailData['leadId'] ?? null,
+                ]);
+
                 // Sort tokens to ensure the same order in the email =)
                 $sortedTokens = $mailData['tokens'];
                 ksort($sortedTokens);
@@ -366,10 +488,14 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
                         $sentMessage->getHeaders()->remove($header->getName());
                         break;
                     case 'List-Unsubscribe':
-                        $sentMessage->getHeaders()->remove($header->getName());
                         if(!empty($mailData) && isset($mailData['tokens']['{unsubscribe_url}'])){
+                            $sentMessage->getHeaders()->remove($header->getName());
                             $sentMessage->getHeaders()->addTextHeader('List-Unsubscribe', '<'.$mailData['tokens']['{unsubscribe_url}'].'>');
                         }
+                        // RFC 8058: List-Unsubscribe header MUST be preserved for one-click unsubscribe
+                        break;
+                    case 'List-Unsubscribe-Post':
+                        // RFC 8058: List-Unsubscribe-Post header MUST be preserved for one-click unsubscribe
                         break;
                         /*
                          * https://docs.aws.amazon.com/aws-sdk-php/v3/api/api-sesv2-2019-09-27.html#sendemail
@@ -397,11 +523,10 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
         // the ENTIRE message with ALL recipients (metadata modifications are lost during
         // re-serialization), resulting in duplicate sends. Failed recipients were already
         // retried inline in doSend() with exponential backoff.
-        $this->logger->error(sprintf(
-            '%d recipients failed after inline retry: %s',
-            count($failures),
-            implode(', ', $failures)
-        ));
+        $this->logSes('ERROR', 'Permanent SES failures after inline retries', [
+            'failed_count' => count($failures),
+            'recipients'   => $failures,
+        ]);
     }
 
     /**

@@ -73,12 +73,13 @@ php bin/console mautic:plugins:reload
 3. In the **DSN** field, enter your connection string in the following format:
 
    ```text
-   mautic+ses+api://<AWS_ACCESS_KEY>:<AWS_SECRET_KEY>@default?region=<AWS_REGION>&ratelimit=14
+   mautic+ses+api://<AWS_ACCESS_KEY>:<AWS_SECRET_KEY>@default?region=<AWS_REGION>&ratelimit=14&loglevel=INFO&logpath=var/logs/ses.log
    ```
 
    - Replace `<AWS_ACCESS_KEY>` and `<AWS_SECRET_KEY>` with your AWS credentials.
    - Replace `<AWS_REGION>` with your AWS region (e.g., `us-east-1`).
    - Optionally set `ratelimit` to override the SES max send rate manually.
+   - Optionally set logging options (see [Detailed Logging](#detailed-logging)).
 
 4. Set the region in the `options` parameter, for example:
 
@@ -171,14 +172,42 @@ To receive feedback from Amazon SES regarding bounces and complaints, you need t
 
 ## Batch Limit & Throttling
 
-To avoid exceeding SES rate limits, this plugin automatically:
+To avoid exceeding SES rate limits and prevent duplicate deliveries, this plugin automatically:
 
 - Caches the current `maxSendRate` returned by AWS SES.
 - Dynamically adjusts the batch size to match that rate.
-- Throttles outgoing email API calls using `usleep()`.
+- Throttles outgoing email API calls using a shared token bucket for cross-worker coordination.
+- **Duplicate Delivery Prevention**: Implements inline retries with exponential backoff (1s, 2s, 4s) within the transport layer.
+- **Partial Failure Handling**: If only some recipients in a batch fail, they are logged, but the whole batch is NOT marked as failed in Mautic. This prevents Mautic from retrying the entire batch and sending duplicate emails to recipients who already received them.
 - Allows overriding the send rate via `ratelimit` DSN option.
 
-This prevents common errors like `TooManyRequests` while maximizing throughput.
+This prevents common errors like `TooManyRequests` while maximizing throughput and ensuring delivery reliability.
+
+---
+
+## Detailed Logging
+
+Since version 1.0.34, you can enable detailed plugin-level logging via DSN options to diagnose delivery issues.
+
+### DSN Logging Options:
+
+| Option | Description | Default |
+| :--- | :--- | :--- |
+| `loglevel` | Log level: `OFF`, `ERROR`, `INFO`, `DEBUG`, `TRACE` | `ERROR` |
+| `logpath` | Absolute path or path relative to Mautic root for a separate log file | (none - logs to main Mautic log) |
+| `masksensitive` | Mask recipient email addresses in logs (`1` or `0`) | `1` |
+
+### Example DSN with Logging:
+```text
+mautic+ses+api://KEY:SECRET@default?region=eu-central-1&loglevel=DEBUG&logpath=var/logs/ses_debug.log&masksensitive=1
+```
+
+In `DEBUG` and `TRACE` levels, the plugin logs:
+- Mautic Email ID and Contact ID.
+- Recipient address (optionally masked).
+- SES `MessageId` returned by Amazon.
+- Execution context (CLI vs WEB) and a unique Correlation ID for each send attempt.
+- Detailed retry logic and error classification.
 
 ---
 
