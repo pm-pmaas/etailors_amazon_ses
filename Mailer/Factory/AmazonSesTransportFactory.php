@@ -78,15 +78,17 @@ class AmazonSesTransportFactory extends AbstractTransportFactory
                     $fetchedRate = $this->getCachedSendRate($cacheFile, PHP_INT_MAX) ?? null;
                 }
             }
-    
-            $effectiveRate = (int)($manualRate ?? $cachedRate ?? $fetchedRate ?? self::DEFAULT_RATE);;
-    
+
+            $effectiveRate = (int)($manualRate ?? $cachedRate ?? $fetchedRate ?? self::DEFAULT_RATE);
+            $batchMultiplier = (int)($dsn->getOption('batchmultiplier') ?? 10);
+
             return new AmazonSesTransport(
                 $client,
                 $this->entityManager,
+                $this->pathsHelper,
                 $this->dispatcher,
                 $this->logger,
-                ['maxSendRate' => $effectiveRate]
+                ['maxSendRate' => $effectiveRate, 'batchMultiplier' => $batchMultiplier]
             );
         }
 

@@ -30,6 +30,7 @@ use Symfony\Component\Mime\Address;
 use Symfony\Component\Mime\Email;
 use Mautic\EmailBundle\Entity\Email as MauticEmailEntity;
 use Doctrine\ORM\EntityManagerInterface;
+use Mautic\CoreBundle\Helper\PathsHelper;
 use Symfony\Component\Mailer\Envelope;
 
 class AmazonSesTransport extends AbstractTransport implements TokenTransportInterface
@@ -86,6 +87,7 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
 
     private $enableTemplate;
     private $entityManager;
+    private PathsHelper $pathsHelper;
     private MauticMessage $message;
     private Envelope $envelope;
 
@@ -98,6 +100,7 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
     public function __construct(
         SesV2Client $amazonclient,
         EntityManagerInterface $entityManager,
+        PathsHelper $pathsHelper,
         ?EventDispatcherInterface $dispatcher = null,
         ?LoggerInterface $logger = null,
         $settings = [],
@@ -107,6 +110,7 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
         $this->client     = $amazonclient;
         $this->dispatcher = $dispatcher;
         $this->entityManager = $entityManager;
+        $this->pathsHelper = $pathsHelper;
         $this->settings   = $settings;
 
         /*
@@ -140,7 +144,6 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
         try {
             $email = $message->getOriginalMessage();
 
-
             // Ensure the message is an instance of MauticMessage
             if (!$email instanceof MauticMessage) {
                 throw new \Exception('Message must be an instance of '.MauticMessage::class);
@@ -164,25 +167,89 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
                     $commands[] = $this->client->getCommand('sendEmail', $payload);
                 }
 
-                $pool = new CommandPool($this->client, $commands, [
-                    'concurrency' => $this->settings['maxSendRate'],
-                    'fulfilled' => function (Result $result, $iteratorId) {
-                        // Log fulfilled messages if necessary
-                    },
-                    'rejected' => function (AwsException $reason, $iteratorId) use ($commands, &$failures) {
-                        $data = $commands[$iteratorId]->toArray();
-                        $failed = Address::create($data['Destination']['ToAddresses'][0]);
-                        $failures[] = $failed->getAddress();
+                // Send in micro-batches with shared token bucket for cross-worker rate limiting.
+                // Lock held only ~30µs (file read/write), NOT during API call.
+                // Workers send in parallel — the bucket ensures combined rate across
+                // all workers never exceeds the SES limit. Set ratelimit to the full
+                // SES account limit (e.g. 70) regardless of worker count.
+                $rate = max(1, (int) ($this->settings['maxSendRate'] ?? 14));
+                $microBatchSize = max(1, (int) ceil($rate / 10));
+                $batches = array_chunk($commands, $microBatchSize);
+                $bucketFile = $this->pathsHelper->getSystemPath('cache', true) . '/ses_token_bucket.json';
 
-                        // Log detailed failure reasons
-                        $this->logger->error('Rejected: message to '.implode(',', $data['Destination']['ToAddresses']));
-                        $this->logger->error('AWS SES Error: '.$reason->getMessage());
-                        $this->logger->error('Payload: '.json_encode($data));
-                    },
-                ]);
+                foreach ($batches as $bi => $batchCommands) {
+                    $batchFailures = [];
 
-                $promise = $pool->promise();
-                $promise->wait();
+                    // Acquire tokens — brief lock (~30µs), then send with NO lock held
+                    $this->acquireTokens($bucketFile, count($batchCommands), $rate);
+
+                    $pool = new CommandPool($this->client, $batchCommands, [
+                        'concurrency' => count($batchCommands),
+                        'fulfilled' => function (Result $result, $iteratorId) {
+                        },
+                        'rejected' => function (AwsException $reason, $iteratorId) use ($batchCommands, &$batchFailures) {
+                            $batchFailures[] = $batchCommands[$iteratorId];
+                            $data = $batchCommands[$iteratorId]->toArray();
+                            $this->logger->error('Rejected: message to '.implode(',', $data['Destination']['ToAddresses']));
+                            $this->logger->error('AWS SES Error: '.$reason->getMessage());
+                        },
+                    ]);
+
+                    $promise = $pool->promise();
+                    $promise->wait();
+
+                    // Inline retry for transient SES failures (network glitch, 429, etc.)
+                    if (!empty($batchFailures)) {
+                        $initialFailCount = count($batchFailures);
+                        $retryDelay = 1000000;
+                        for ($attempt = 1; $attempt <= 3 && !empty($batchFailures); $attempt++) {
+                            $this->logger->error(sprintf(
+                                '%d SES sends failed, inline retry %d/3 after %dms',
+                                count($batchFailures), $attempt, $retryDelay / 1000
+                            ));
+                            usleep($retryDelay);
+                            $retryDelay *= 2;
+
+                            $retryCommands = $batchFailures;
+                            $batchFailures = [];
+                            $retryPool = new CommandPool($this->client, $retryCommands, [
+                                'concurrency' => count($retryCommands),
+                                'fulfilled' => function (Result $result, $iteratorId) {
+                                },
+                                'rejected' => function (AwsException $reason, $iteratorId) use ($retryCommands, &$batchFailures) {
+                                    $batchFailures[] = $retryCommands[$iteratorId];
+                                    $data = $retryCommands[$iteratorId]->toArray();
+                                    $this->logger->error(sprintf(
+                                        'Retry rejected: %s — %s',
+                                        $data['Destination']['ToAddresses'][0],
+                                        $reason->getAwsErrorMessage() ?: $reason->getMessage()
+                                    ));
+                                },
+                            ]);
+                            $retryPool->promise()->wait();
+
+                            if (empty($batchFailures)) {
+                                $this->logger->error(sprintf(
+                                    'All %d recovered on retry %d/3',
+                                    count($retryCommands), $attempt
+                                ));
+                                break;
+                            }
+                        }
+
+                        $recovered = $initialFailCount - count($batchFailures);
+                        if ($recovered > 0) {
+                            $this->logger->error(sprintf(
+                                '%d/%d recovered by inline retry, %d permanently failed',
+                                $recovered, $initialFailCount, count($batchFailures)
+                            ));
+                        }
+                        foreach ($batchFailures as $failedCmd) {
+                            $data = $failedCmd->toArray();
+                            $failures[] = $data['Destination']['ToAddresses'][0];
+                        }
+                    }
+                }
             }
 
             $this->processFailures($failures);
@@ -227,7 +294,6 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
             ];
             yield $payload;
             $payload = [];
-            $this->throttle();
 
         } else {
 
@@ -262,7 +328,6 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
                 ];
                 yield $payload;
                 $payload = [];
-                $this->throttle();
             }
         }
     }
@@ -324,38 +389,19 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
      */
     private function processFailures(array $failures): void
     {
-        $this->logger->debug('proces failures:');
-        $this->logger->debug(json_encode($failures));
-
         if (empty($failures)) {
             return;
         }
-        // Make a copy of the metadata
-        $metadata = $this->getMetadata();
-        $keys     = array_keys($metadata);
 
-        // Clear the metadata
-        $this->message->clearMetadata();
-
-        // Add the metadata for the failed recipients
-
-        if (!empty($metadata)) {
-            foreach ($failures as $failure) {
-                if (is_int($failure)) {
-                    $this->message->addMetadata($keys[$failure], $metadata[$keys[$failure]]);
-                } else {
-                    $this->message->addMetadata($failure, $metadata[$failure]);
-                }
-            }
-        }
-
-        $this->logger->debug('There are partial failures, replacing metadata, and failing the message');
-        /*
-            The message that failed will be retried with only the failed recipients
-            This transport assume that the queue mode is enabled
-        */
-
-        throw new \Exception('There are  '.count($failures).' partial failures, check logs for exception reasons');
+        // Log failures but do NOT throw. Throwing causes Symfony Messenger to retry
+        // the ENTIRE message with ALL recipients (metadata modifications are lost during
+        // re-serialization), resulting in duplicate sends. Failed recipients were already
+        // retried inline in doSend() with exponential backoff.
+        $this->logger->error(sprintf(
+            '%d recipients failed after inline retry: %s',
+            count($failures),
+            implode(', ', $failures)
+        ));
     }
 
     /**
@@ -373,31 +419,60 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
 
     public function getMaxBatchLimit(): int
     {
-        return (int) ($this->settings['maxSendRate'] ?? 14);    
+        // High batch limit so each Messenger message has many contacts.
+        // Actual send rate is controlled by micro-batch pacing in doSend().
+        $rate = (int) ($this->settings['maxSendRate'] ?? 14);
+        $multiplier = (int) ($this->settings['batchMultiplier'] ?? 10);
+        return $rate * $multiplier;
     }
 
-    private function throttle(): void
+    /**
+     * Acquire tokens from a shared file-based token bucket.
+     * Lock is held only during file read/write (~30µs), NOT during API calls.
+     * Workers sleep outside the lock when tokens are unavailable.
+     */
+    private function acquireTokens(string $bucketFile, int $tokens, int $rate): void
     {
-        static $lastSendTime = 0;
-        
-        $rate = $this->settings['maxSendRate'] ?? 14;
-        $targetInterval = (int)(1_000_000 / max(1, $rate));
-        
-        $now = microtime(true) * 1_000_000;
-        
-        if ($lastSendTime > 0) {
-            $elapsed = $now - $lastSendTime;
-            $remainingDelay = $targetInterval - $elapsed;
-            
-            if ($remainingDelay > 1000) {
-                usleep((int)$remainingDelay);
-                $this->logger?->debug("SES adaptive throttling: elapsed={$elapsed}µs, sleeping={$remainingDelay}µs");
-            } else {
-                $this->logger?->debug("SES adaptive throttling: no sleep needed (elapsed={$elapsed}µs)");
+        while (true) {
+            $fh = fopen($bucketFile, 'c+');
+            flock($fh, LOCK_EX);
+
+            $data = fread($fh, 256);
+            $bucket = $data ? json_decode($data, true) : null;
+            $now = microtime(true);
+
+            if (!$bucket || !isset($bucket['tokens'], $bucket['last_time'])) {
+                $bucket = ['tokens' => 0.0, 'last_time' => $now];
             }
+
+            // Refill tokens based on elapsed time, cap at rate
+            $elapsed = $now - $bucket['last_time'];
+            $bucket['tokens'] = min((float) $rate, $bucket['tokens'] + $elapsed * $rate);
+            $bucket['last_time'] = $now;
+
+            if ($bucket['tokens'] >= $tokens) {
+                $bucket['tokens'] -= $tokens;
+                ftruncate($fh, 0);
+                rewind($fh);
+                fwrite($fh, json_encode($bucket));
+                flock($fh, LOCK_UN);
+                fclose($fh);
+                return;
+            }
+
+            // Not enough tokens — save current state so next iteration sees elapsed time,
+            // then release lock and sleep outside
+            $deficit = $tokens - $bucket['tokens'];
+            $waitUs = (int) ceil(($deficit / $rate) * 1_000_000);
+
+            ftruncate($fh, 0);
+            rewind($fh);
+            fwrite($fh, json_encode($bucket));
+            flock($fh, LOCK_UN);
+            fclose($fh);
+
+            usleep($waitUs);
         }
-        
-        $lastSendTime = microtime(true) * 1_000_000;
     }
 
     private function getEmailIdFromMetadata(array $metadata): ?int
