@@ -15,6 +15,9 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 - Lowered default `DEFAULT_RATE` from 14 to 13 to provide a safety margin against Amazon SES rate limits.
 - Supported both `ratelimit` and `rateLimit` (case-insensitive) as DSN options to improve user experience and fix issues with camelCase parameters being ignored.
 
+### Fixed
+- Fixed SES v2 bounce and complaint processing by supporting `eventType` in addition to `notificationType` in SNS payloads.
+
 
 ## [1.0.32] - 2026-04-22
 ### Added
