@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
+## [1.0.33] - 2026-04-22
+### Added
+- Configurable detailed SES send logging via DSN options: `loglevel`, `logpath`, and `masksensitive`.
+- Support for separate log channel/file using Monolog if `logpath` is provided.
+- Detailed logging for send attempts, including Mautic email ID, contact ID, recipient (optionally masked), SES `MessageId`, and retry logic.
+- Correlation ID for tracking send attempts across logs.
+
+### Changed
+- Lowered default `DEFAULT_RATE` from 14 to 13 to provide a safety margin against Amazon SES rate limits.
+- Supported both `ratelimit` and `rateLimit` (case-insensitive) as DSN options to improve user experience and fix issues with camelCase parameters being ignored.
+
+
 ## [1.0.32] - 2026-04-22
 ### Added
 - Shared file-based token bucket for cross-worker SES rate coordination.
