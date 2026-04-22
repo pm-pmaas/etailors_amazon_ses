@@ -48,5 +48,10 @@
         "csfixer": "vendor/bin/php-cs-fixer fix . -v --dry-run --diff --using-cache=no --config=.php-cs-fixer.php",
         "fixcs": "vendor/bin/php-cs-fixer fix . -v --using-cache=no --config=.php-cs-fixer.php",
         "phpstan": "[ ! -f var/cache/test/AppKernelTestDebugContainer.xml ] && (echo 'Building test cache ...'; APP_ENV=test APP_DEBUG=1 bin/console > /dev/null 2>&1); php -d memory_limit=4G vendor/bin/phpstan analyse ."
+    },
+    "config": {
+        "allow-plugins": {
+            "composer/installers": true
+        }
     }
 }

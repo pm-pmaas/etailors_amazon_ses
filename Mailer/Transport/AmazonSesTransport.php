@@ -268,7 +268,7 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
                         'fulfilled' => function (Result $result, $iteratorId) use ($batchCommands) {
                             $data = $batchCommands[$iteratorId]->toArray();
                             $recipient = $data['Destination']['ToAddresses'][0] ?? 'unknown';
-                            
+
                             $meta = $this->getMetadata();
                             $contactId = $meta[$recipient]['contactId'] ?? $meta[$recipient]['leadId'] ?? null;
 
@@ -488,10 +488,14 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
                         $sentMessage->getHeaders()->remove($header->getName());
                         break;
                     case 'List-Unsubscribe':
-                        $sentMessage->getHeaders()->remove($header->getName());
                         if(!empty($mailData) && isset($mailData['tokens']['{unsubscribe_url}'])){
+                            $sentMessage->getHeaders()->remove($header->getName());
                             $sentMessage->getHeaders()->addTextHeader('List-Unsubscribe', '<'.$mailData['tokens']['{unsubscribe_url}'].'>');
                         }
+                        // RFC 8058: List-Unsubscribe header MUST be preserved for one-click unsubscribe
+                        break;
+                    case 'List-Unsubscribe-Post':
+                        // RFC 8058: List-Unsubscribe-Post header MUST be preserved for one-click unsubscribe
                         break;
                         /*
                          * https://docs.aws.amazon.com/aws-sdk-php/v3/api/api-sesv2-2019-09-27.html#sendemail

@@ -23,7 +23,7 @@ use Mautic\CoreBundle\Helper\PathsHelper;
 
 class AmazonSesTransportFactory extends AbstractTransportFactory
 {
-    const DEFAULT_RATE = 14;
+    const DEFAULT_RATE = 13;
 
     private static SesV2Client $amazonclient;
     private static TranslatorInterface $translator;
@@ -60,7 +60,7 @@ class AmazonSesTransportFactory extends AbstractTransportFactory
             self::initAmazonClient($dsn);
             $client = self::getAmazonClient();
     
-            $manualRate = $dsn->getOption('ratelimit');
+            $manualRate = $dsn->getOption('ratelimit') ?? $dsn->getOption('rateLimit');
     
             $cacheFile = $this->getCachePath();
             $cacheTTL = 3600; // 60 minutes
@@ -82,13 +82,23 @@ class AmazonSesTransportFactory extends AbstractTransportFactory
             $effectiveRate = (int)($manualRate ?? $cachedRate ?? $fetchedRate ?? self::DEFAULT_RATE);
             $batchMultiplier = (int)($dsn->getOption('batchmultiplier') ?? 10);
 
+            $logLevel = $dsn->getOption('loglevel') ?? 'ERROR';
+            $logPath = $dsn->getOption('logpath');
+            $maskSensitive = (bool) ($dsn->getOption('masksensitive') ?? true);
+
             return new AmazonSesTransport(
                 $client,
                 $this->entityManager,
                 $this->pathsHelper,
                 $this->dispatcher,
                 $this->logger,
-                ['maxSendRate' => $effectiveRate, 'batchMultiplier' => $batchMultiplier]
+                [
+                    'maxSendRate'     => $effectiveRate,
+                    'batchMultiplier' => $batchMultiplier,
+                    'logLevel'        => strtoupper($logLevel),
+                    'logPath'         => $logPath,
+                    'maskSensitive'   => $maskSensitive,
+                ]
             );
         }
 
@@ -251,6 +261,9 @@ class AmazonSesTransportFactory extends AbstractTransportFactory
     {
         // Strip HTML tags and any encoded entities.
         $cleanPassword = strip_tags($password);
+
+        // Decode HTML entities (e.g., &nbsp;) before stripping non-ASCII characters
+        $cleanPassword = html_entity_decode($cleanPassword, ENT_QUOTES | ENT_HTML5, 'UTF-8');
 
         // Optionally, remove other unwanted characters, e.g., non-printable ASCII.
         // This regular expression will strip any non-ASCII characters.

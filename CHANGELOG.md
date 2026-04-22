@@ -18,14 +18,18 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 
 ## [1.0.32] - 2026-04-22
 ### Added
+- RFC 8058 (one-click unsubscribe) compliance support.
+- Support for `List-Unsubscribe-Post` header.
 - Shared file-based token bucket for cross-worker SES rate coordination.
 - New DSN option `batchmultiplier` (default 10) to control contacts per queue message.
 - Inline retry with exponential backoff (1s, 2s, 4s) within `doSend()`, replacing Symfony Messenger retry to prevent metadata loss.
 ### Changed
+- Improved RFC 8058 compliance by preserving `List-Unsubscribe` headers when no replacement token is available.
 - Improved throughput pacing by sending emails in micro-batches (ceil(rate/10)) via `CommandPool`.
 - Moved rate limiting to sit between actual SES API calls rather than payload building.
 - Updated `getMaxBatchLimit()` to return `rate` × `batchmultiplier`.
 ### Fixed
+- Fixed password sanitization bug where HTML entities (like `&nbsp;`) were not fully removed before stripping non-ASCII characters.
 - Fixed `processFailures()` throwing an exception which caused Symfony Messenger to retry entire batches and result in duplicate sends.
 - Fixed `throttle()` positioning to ensure effective rate limiting.
 - Prevented throughput spikes above SES limit when using multiple workers by implementing shared rate limiting.
