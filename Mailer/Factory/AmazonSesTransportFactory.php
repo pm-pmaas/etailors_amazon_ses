@@ -25,7 +25,8 @@ class AmazonSesTransportFactory extends AbstractTransportFactory
 {
     const DEFAULT_RATE = 14;
 
-    private SesV2Client $amazonclient;
+    /** @var array<string, SesV2Client> Keyed by AWS region. */
+    private array $amazonClients = [];
     private TranslatorInterface $translator;
     private PathsHelper $pathsHelper;
     private EntityManagerInterface $entityManager;
@@ -177,13 +178,20 @@ class AmazonSesTransportFactory extends AbstractTransportFactory
     /**
      * @return SesV2Client
      */
-    public function getAmazonClient(): SesV2Client
+    public function getAmazonClient(?string $region = null): SesV2Client
     {
-        if (!isset($this->amazonclient)) {
+        if ($region !== null) {
+            if (!isset($this->amazonClients[$region])) {
+                throw new IncompleteDsnException($this->translator->trans('mautic.amazonses.plugin.amazonclient.notset', [], 'validators'));
+            }
+            return $this->amazonClients[$region];
+        }
+
+        if (empty($this->amazonClients)) {
             throw new IncompleteDsnException($this->translator->trans('mautic.amazonses.plugin.amazonclient.notset', [], 'validators'));
         }
 
-        return $this->amazonclient;
+        return reset($this->amazonClients);
     }
 
     /**
@@ -219,7 +227,7 @@ class AmazonSesTransportFactory extends AbstractTransportFactory
             throw new InvalidArgumentException($this->translator->trans('mautic.amazonses.plugin.ratelimit.invalid', [], 'validators'));
         }
 
-        if (!isset($this->amazonclient)) {
+        if (!isset($this->amazonClients[$dsn_region])) {
             $config = [
                 'version'     => 'latest',
                 'credentials' => CredentialProvider::fromCredentials(new Credentials($dsn_user, $dsn_password)),
@@ -231,10 +239,10 @@ class AmazonSesTransportFactory extends AbstractTransportFactory
                 $config['handler'] = $handler;
             }
 
-            $this->amazonclient = new SesV2Client($config);
+            $this->amazonClients[$dsn_region] = new SesV2Client($config);
         }
 
-        return $this->amazonclient;
+        return $this->amazonClients[$dsn_region];
     }
 
     /**
