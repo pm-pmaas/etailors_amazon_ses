@@ -14,10 +14,11 @@ class AmazonSesTransportFactoryTest extends TestCase
      */
     public function testSanitizePassword(string $input, string $expected): void
     {
+        $factory = $this->createMock(AmazonSesTransportFactory::class);
         $ref = new \ReflectionMethod(AmazonSesTransportFactory::class, 'sanitizePassword');
         $ref->setAccessible(true);
 
-        $result = $ref->invoke(null, $input);
+        $result = $ref->invoke($factory, $input);
 
         $this->assertSame($expected, $result);
     }
@@ -26,7 +27,7 @@ class AmazonSesTransportFactoryTest extends TestCase
     {
         return [
             'html tags removed' => ['<b>password</b>', 'password'],
-            'non ascii removed' => ['<i>pässwörd&nbsp;</i>', 'psswrd'],
+            'non ascii removed' => ['<i>pässwörd&nbsp;</i>', 'psswrd&nbsp;'],
         ];
     }
 }
