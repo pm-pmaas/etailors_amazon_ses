@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
+## [1.0.35] - 2026-05-21
+### Fixed
+- Fixed multi-region SES support: `AmazonSesTransportFactory` now caches `SesV2Client` instances per region instead of a single shared client, preventing the first configured region from being silently reused for all subsequent transports with different regions.
+
 ## [1.0.34] - 2026-05-21
 ### Fixed
 - Re-released fix from 1.0.33 branch that was missing from the 1.0.33 tag: mailer DSN not being recognized in worker/messenger context due to static properties in `AmazonSesTransportFactory`.
