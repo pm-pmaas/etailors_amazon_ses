@@ -32,13 +32,11 @@ return static function (ContainerConfigurator $configurator) {
         ->exclude('../{'.implode(',', array_merge(MauticCoreExtension::DEFAULT_EXCLUDES, $excludes)).'}');
 
     $services->get(\MauticPlugin\AmazonSesBundle\Mailer\Factory\AmazonSesTransportFactory::class)
-    ->autowire(false) 
-    ->arg('$transportCallback', service(\Mautic\EmailBundle\Model\TransportCallback::class))
-    ->arg('$eventDispatcher', service('event_dispatcher'))
-    ->arg('$translator', service('translator'))
-    ->arg('$entityManager', service('doctrine.orm.entity_manager'))
-    ->arg('$pathsHelper', service('mautic.helper.paths'))
-    ->arg('$logger', service('logger'))
-    ->arg('$amazonclient', null)
-    ->tag('mailer.transport_factory');
+        ->arg('$transportCallback', service(\Mautic\EmailBundle\Model\TransportCallback::class))
+        ->arg('$eventDispatcher', service('event_dispatcher'))
+        ->arg('$translator', service('translator'))
+        ->arg('$entityManager', service('doctrine.orm.entity_manager'))
+        ->arg('$pathsHelper', service('mautic.helper.paths'))
+        ->arg('$logger', service('logger'))
+        ->tag('mailer.transport_factory');
 };
