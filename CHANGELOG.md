@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
+## [1.0.34] - 2026-05-21
+### Fixed
+- Re-released fix from 1.0.33 branch that was missing from the 1.0.33 tag: mailer DSN not being recognized in worker/messenger context due to static properties in `AmazonSesTransportFactory`.
+
+## [1.0.33] - 2026-05-21
+### Fixed
+- Fixed mailer DSN not being recognized in worker/messenger context by converting static properties and methods in `AmazonSesTransportFactory` to instance-based, ensuring each process gets its own properly initialized factory.
+- Fixed cache permission errors by moving the SES send quota cache file from the `cache` directory to the `tmp` directory.
+- Removed unused `$amazonclient` constructor parameter from `AmazonSesTransportFactory`.
+
 ## [1.0.32] - 2026-04-22
 ### Added
 - Shared file-based token bucket for cross-worker SES rate coordination.

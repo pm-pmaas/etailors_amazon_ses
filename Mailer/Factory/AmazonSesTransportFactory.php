@@ -25,8 +25,8 @@ class AmazonSesTransportFactory extends AbstractTransportFactory
 {
     const DEFAULT_RATE = 14;
 
-    private static SesV2Client $amazonclient;
-    private static TranslatorInterface $translator;
+    private SesV2Client $amazonclient;
+    private TranslatorInterface $translator;
     private PathsHelper $pathsHelper;
     private EntityManagerInterface $entityManager;
 
@@ -36,11 +36,10 @@ class AmazonSesTransportFactory extends AbstractTransportFactory
         TranslatorInterface $translator,
         EntityManagerInterface $entityManager,
         PathsHelper $pathsHelper,
-        ?LoggerInterface $logger = null,
-        ?SesV2Client $amazonclient = null
+        ?LoggerInterface $logger = null
     ) {
-        parent::__construct($eventDispatcher, $amazonclient, $logger);
-        self::$translator = $translator;
+        parent::__construct($eventDispatcher, null, $logger);
+        $this->translator = $translator;
         $this->entityManager = $entityManager;
         $this->pathsHelper = $pathsHelper;
     }
@@ -57,8 +56,7 @@ class AmazonSesTransportFactory extends AbstractTransportFactory
     public function create(Dsn $dsn): TransportInterface
     {
         if (AmazonSesTransport::MAUTIC_AMAZONSES_API_SCHEME === $dsn->getScheme()) {
-            self::initAmazonClient($dsn);
-            $client = self::getAmazonClient();
+            $client = $this->initAmazonClient($dsn);
     
             $manualRate = $dsn->getOption('ratelimit');
     
@@ -171,58 +169,57 @@ class AmazonSesTransportFactory extends AbstractTransportFactory
         }
      }
 
-     private function getCachePath(): string
-     {
-            return $this->pathsHelper->getSystemPath('cache', true) . '/ses_send_quota.json';
-     }
+    private function getCachePath(): string
+    {
+        return $this->pathsHelper->getSystemPath('tmp', true) . '/ses_send_quota.json';
+    }
 
     /**
      * @return SesV2Client
      */
-    public static function getAmazonClient(): SesV2Client
+    public function getAmazonClient(): SesV2Client
     {
-        if (!isset(self::$amazonclient)) {
-            // throw new IncompleteDsnException('clientnotset');
-            throw new IncompleteDsnException(self::$translator->trans('mautic.amazonses.plugin.amazonclient.notset', [], 'validators'));
+        if (!isset($this->amazonclient)) {
+            throw new IncompleteDsnException($this->translator->trans('mautic.amazonses.plugin.amazonclient.notset', [], 'validators'));
         }
 
-        return self::$amazonclient;
+        return $this->amazonclient;
     }
 
     /**
      * @param Dsn $dsn
      * @param \Countable|null $handler
-     * @return void
+     * @return SesV2Client
      */
-    public static function initAmazonClient(Dsn $dsn, ?\Countable $handler = null): void
+    public function initAmazonClient(Dsn $dsn, ?\Countable $handler = null): SesV2Client
     {
         $dsn_user = $dsn->getUser();
         if (null === $dsn_user) {
-            throw new IncompleteDsnException(self::$translator->trans('mautic.amazonses.plugin.user.empty', [], 'validators'));
+            throw new IncompleteDsnException($this->translator->trans('mautic.amazonses.plugin.user.empty', [], 'validators'));
         }
 
         $dsn_password = $dsn->getPassword();
 
-        $dsn_password = self::sanitizePassword($dsn_password);
+        $dsn_password = $this->sanitizePassword($dsn_password);
 
         if (null === $dsn_password) {
-            throw new IncompleteDsnException(self::$translator->trans('mautic.amazonses.plugin.password.empty', [], 'validators'));
+            throw new IncompleteDsnException($this->translator->trans('mautic.amazonses.plugin.password.empty', [], 'validators'));
         }
 
         if (!$dsn_region = $dsn->getOption('region')) {
-            throw new IncompleteDsnException(self::$translator->trans('mautic.amazonses.plugin.region.empty', [], 'validators'));
+            throw new IncompleteDsnException($this->translator->trans('mautic.amazonses.plugin.region.empty', [], 'validators'));
         }
 
         if (!array_key_exists($dsn_region, AmazonSesTransport::AMAZON_REGION)) {
-            throw new InvalidArgumentException(self::$translator->trans('mautic.amazonses.plugin.region.invalid', [], 'validators'));
+            throw new InvalidArgumentException($this->translator->trans('mautic.amazonses.plugin.region.invalid', [], 'validators'));
         }
 
         $ratelimit = $dsn->getOption('ratelimit');
         if (null !== $ratelimit and !is_numeric($dsn->getOption('ratelimit'))) {
-            throw new InvalidArgumentException(self::$translator->trans('mautic.amazonses.plugin.ratelimit.invalid', [], 'validators'));
+            throw new InvalidArgumentException($this->translator->trans('mautic.amazonses.plugin.ratelimit.invalid', [], 'validators'));
         }
 
-        if (!isset(self::$amazonclient)) {
+        if (!isset($this->amazonclient)) {
             $config = [
                 'version'     => 'latest',
                 'credentials' => CredentialProvider::fromCredentials(new Credentials($dsn_user, $dsn_password)),
@@ -234,11 +231,10 @@ class AmazonSesTransportFactory extends AbstractTransportFactory
                 $config['handler'] = $handler;
             }
 
-            /*
-             * Check singleton.
-             */
-            self::$amazonclient = new SesV2Client($config);
+            $this->amazonclient = new SesV2Client($config);
         }
+
+        return $this->amazonclient;
     }
 
     /**
@@ -247,7 +243,7 @@ class AmazonSesTransportFactory extends AbstractTransportFactory
      * @param string $password
      * @return string
      */
-    private static function sanitizePassword(string $password): string
+    private function sanitizePassword(string $password): string
     {
         // Strip HTML tags and any encoded entities.
         $cleanPassword = strip_tags($password);
