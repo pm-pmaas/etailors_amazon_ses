@@ -105,21 +105,17 @@ Your IAM user must have permission to send and get account limits. Here’s an e
   "Version": "2012-10-17",
   "Statement": [
     {
-      "Sid": "AllowSending",
+      "Sid": "AllowSesSendingAndQuota",
       "Effect": "Allow",
       "Action": [
         "ses:SendEmail",
-        "ses:SendBulkEmail"
+        "ses:SendRawEmail",
+        "ses:GetSendQuota"
       ],
-      "Resource": "arn:aws:ses:*:<account id>:identity/*"
-    },
-    {
-      "Sid": "AllowGetAccount",
-      "Effect": "Allow",
-      "Action": [
-        "ses:GetAccount"
-      ],
-      "Resource": "*"
+      "Resource": [
+        "arn:aws:ses:<region>:<account id>:identity/*",
+        "arn:aws:ses:<region>:<account id>:configuration-set/*"
+      ]
     }
   ]
 }
