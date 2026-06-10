@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
+## [1.0.36] - 2026-06-10
+### Fixed
+- Fixed missing `eventType` fallback in `CallbackSubscriber.php` for the `Notification` case: added null-coalescing fallback `$message['notificationType'] ?? $message['eventType'] ?? 'unknown'` to handle SNS notifications that use `eventType` instead of `notificationType`.
+
 ## [1.0.35] - 2026-05-21
 ### Fixed
 - Fixed multi-region SES support: `AmazonSesTransportFactory` now caches `SesV2Client` instances per region instead of a single shared client, preventing the first configured region from being silently reused for all subsequent transports with different regions.
