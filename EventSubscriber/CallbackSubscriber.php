@@ -207,7 +207,8 @@ class CallbackSubscriber implements EventSubscriberInterface
 
                 try {
                     $message = json_decode($payload['Message'], true, 512, JSON_THROW_ON_ERROR);
-                    $this->processJsonPayload($message, $message['notificationType']);
+                    $innerType = $message['notificationType'] ?? $message['eventType'] ?? 'unknown';
+                    $this->processJsonPayload($message, $innerType);
                 } catch (\Exception $e) {
                     $this->logger->error('AmazonCallback: Invalid Notification JSON Payload');
                     $hasError = true;
