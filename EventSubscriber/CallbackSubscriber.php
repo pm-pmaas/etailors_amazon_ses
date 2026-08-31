@@ -279,7 +279,7 @@ class CallbackSubscriber implements EventSubscriberInterface
             $typeName = 'HARD';
         } elseif ('Transient' === $type) {
             $typeName = 'SOFT';
-            $channel = 'soft bounce';
+            $channel = 'soft_bounce';
         }
         $emailId = $this->getEmailHeader($payload);
         $bouncedRecipients = $payload['bounce']['bouncedRecipients'];
@@ -305,7 +305,7 @@ class CallbackSubscriber implements EventSubscriberInterface
         if ($contacts = $result->getContacts()) {
             foreach ($contacts as $contact) {
                 $channel = ($channel) ?: 'email';
-                if (is_array($channel) && 'soft bounce' === key($channel)) {
+                if (is_array($channel) && 'soft_bounce' === key($channel)) {
                     $this->addSoftBounceDncEntry($contact, $channel, $dncReason, $comments);
                 } else {
                     $this->dncModel->addDncForContact($contact->getId(), $channel, $dncReason, $comments);
@@ -319,8 +319,8 @@ class CallbackSubscriber implements EventSubscriberInterface
         $dncEntities       = $contact->getDoNotContact();
         $softBounceUpdated = false;
         foreach ($dncEntities as $dnc) {
-            if ('soft bounce' === $dnc->getChannel()) {
-                $this->dncModel->updateDncRecord($dnc, $contact, 'soft bounce', $dncReason, $comments);
+            if ('soft_bounce' === $dnc->getChannel()) {
+                $this->dncModel->updateDncRecord($dnc, $contact, 'soft_bounce', $dncReason, $comments);
                 $this->leadModel->saveEntity($contact);
                 $softBounceUpdated = true;
                 break;
