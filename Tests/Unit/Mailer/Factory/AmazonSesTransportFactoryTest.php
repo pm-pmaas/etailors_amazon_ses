@@ -14,7 +14,8 @@ class AmazonSesTransportFactoryTest extends TestCase
      */
     public function testSanitizePassword(string $input, string $expected): void
     {
-        $factory = $this->createMock(AmazonSesTransportFactory::class);
+        $reflection = new \ReflectionClass(AmazonSesTransportFactory::class);
+        $factory = $reflection->newInstanceWithoutConstructor();
         $ref = new \ReflectionMethod(AmazonSesTransportFactory::class, 'sanitizePassword');
         $ref->setAccessible(true);
 
