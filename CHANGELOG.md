@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
+## [1.0.37] - 2026-07-24
+### Fixed
+- Changed DNC channel value from `soft bounce` to `soft_bounce` to fix `RouteNotFoundException` in Mautic reports. **Note: requires manual SQL migration: `UPDATE lead_donotcontact SET channel = 'soft_bounce' WHERE channel = 'soft bounce';`**
+- Fixed SES rate limit token bucket cache permission errors by returning a clear transport error instead of crashing with a `flock()` `TypeError` when the Mautic cache directory is not writable.
+
 ## [1.0.36] - 2026-06-10
 ### Fixed
 - Fixed missing `eventType` fallback in `CallbackSubscriber.php` for the `Notification` case: added null-coalescing fallback `$message['notificationType'] ?? $message['eventType'] ?? 'unknown'` to handle SNS notifications that use `eventType` instead of `notificationType`.
