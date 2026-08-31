@@ -434,8 +434,24 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
     private function acquireTokens(string $bucketFile, int $tokens, int $rate): void
     {
         while (true) {
-            $fh = fopen($bucketFile, 'c+');
-            flock($fh, LOCK_EX);
+            $fh = @fopen($bucketFile, 'c+');
+            if (false === $fh) {
+                $message = sprintf(
+                    'Unable to open SES rate limit token bucket file "%s". Please verify that the Mautic cache directory is writable by the web server/PHP user.',
+                    $bucketFile
+                );
+                $this->logger->error($message);
+
+                throw new TransportException($message);
+            }
+
+            if (!flock($fh, LOCK_EX)) {
+                fclose($fh);
+                $message = sprintf('Unable to lock SES rate limit token bucket file "%s".', $bucketFile);
+                $this->logger->error($message);
+
+                throw new TransportException($message);
+            }
 
             $data = fread($fh, 256);
             $bucket = $data ? json_decode($data, true) : null;
@@ -452,9 +468,23 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
 
             if ($bucket['tokens'] >= $tokens) {
                 $bucket['tokens'] -= $tokens;
-                ftruncate($fh, 0);
+                if (!ftruncate($fh, 0)) {
+                    flock($fh, LOCK_UN);
+                    fclose($fh);
+                    $message = sprintf('Unable to truncate SES rate limit token bucket file "%s".', $bucketFile);
+                    $this->logger->error($message);
+
+                    throw new TransportException($message);
+                }
                 rewind($fh);
-                fwrite($fh, json_encode($bucket));
+                if (false === fwrite($fh, json_encode($bucket))) {
+                    flock($fh, LOCK_UN);
+                    fclose($fh);
+                    $message = sprintf('Unable to write SES rate limit token bucket file "%s".', $bucketFile);
+                    $this->logger->error($message);
+
+                    throw new TransportException($message);
+                }
                 flock($fh, LOCK_UN);
                 fclose($fh);
                 return;
@@ -465,9 +495,23 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
             $deficit = $tokens - $bucket['tokens'];
             $waitUs = (int) ceil(($deficit / $rate) * 1_000_000);
 
-            ftruncate($fh, 0);
+            if (!ftruncate($fh, 0)) {
+                flock($fh, LOCK_UN);
+                fclose($fh);
+                $message = sprintf('Unable to truncate SES rate limit token bucket file "%s".', $bucketFile);
+                $this->logger->error($message);
+
+                throw new TransportException($message);
+            }
             rewind($fh);
-            fwrite($fh, json_encode($bucket));
+            if (false === fwrite($fh, json_encode($bucket))) {
+                flock($fh, LOCK_UN);
+                fclose($fh);
+                $message = sprintf('Unable to write SES rate limit token bucket file "%s".', $bucketFile);
+                $this->logger->error($message);
+
+                throw new TransportException($message);
+            }
             flock($fh, LOCK_UN);
             fclose($fh);
 
