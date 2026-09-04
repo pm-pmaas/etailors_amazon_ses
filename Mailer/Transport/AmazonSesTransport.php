@@ -20,6 +20,7 @@ use Mautic\EmailBundle\Helper\MailHelper;
 use Mautic\EmailBundle\Mailer\Message\MauticMessage;
 use Mautic\EmailBundle\Mailer\Transport\TokenTransportInterface;
 use Mautic\EmailBundle\Mailer\Transport\TokenTransportTrait;
+use MauticPlugin\AmazonSesBundle\Helper\MauticEmailId;
 use Psr\EventDispatcher\EventDispatcherInterface;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\Mailer\Exception\TransportException;
@@ -349,6 +350,12 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
         $payload['ReplyToAddresses'] = $this->stringifyAddresses($this->setReplyTo($sentMessage));
 
         foreach ($sentMessage->getHeaders()->all() as $header) {
+            if (0 === strcasecmp($header->getName(), MauticEmailId::HEADER_NAME)) {
+                MauticEmailId::addToSesPayload($payload, $header->getBodyAsString());
+
+                continue;
+            }
+
             if ($header instanceof MetadataHeader) {
                 $payload['EmailTags'][] = ['Name' => $header->getKey(), 'Value' => $header->getValue()];
             } else {

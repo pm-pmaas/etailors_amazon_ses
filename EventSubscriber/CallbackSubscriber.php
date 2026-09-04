@@ -20,6 +20,7 @@ use Mautic\LeadBundle\Entity\DoNotContact as DNC;
 use Mautic\LeadBundle\Entity\Lead;
 use Mautic\LeadBundle\Model\DoNotContact as DncModel;
 use Mautic\LeadBundle\Model\LeadModel;
+use MauticPlugin\AmazonSesBundle\Helper\MauticEmailId;
 use MauticPlugin\AmazonSesBundle\Mailer\Transport\AmazonSesTransport;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\EventDispatcher\EventSubscriberInterface;
@@ -227,6 +228,7 @@ class CallbackSubscriber implements EventSubscriberInterface
                 $typeFound = true;
 
                 $emailId = $this->getEmailHeader($payload);
+                $this->logMissingEmailId('complaint', $payload, $emailId);
 
                 // Get bounced recipients in an array
                 $complaintRecipients = $payload['complaint']['complainedRecipients'];
@@ -282,6 +284,7 @@ class CallbackSubscriber implements EventSubscriberInterface
             $channel = 'soft_bounce';
         }
         $emailId = $this->getEmailHeader($payload);
+        $this->logMissingEmailId('bounce', $payload, $emailId);
         $bouncedRecipients = $payload['bounce']['bouncedRecipients'];
         foreach ($bouncedRecipients as $bouncedRecipient) {
             $bounceSubType = $payload['bounce']['bounceSubType'];
@@ -391,16 +394,26 @@ class CallbackSubscriber implements EventSubscriberInterface
         return preg_replace('/(.*)<(.*)>(.*)/s', '\2', $email);
     }
 
-    public function getEmailHeader($payload)
+    public function getEmailHeader(array $payload): ?int
     {
-        if (!isset($payload['mail']['headers'])) {
-            return null;
+        return MauticEmailId::fromSesNotification($payload);
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     */
+    private function logMissingEmailId(string $notificationType, array $payload, ?int $emailId): void
+    {
+        if (null !== $emailId) {
+            return;
         }
 
-        foreach ($payload['mail']['headers'] as $header) {
-            if ('X-EMAIL-ID' === strtoupper($header['name'])) {
-                return $header['value'];
-            }
-        }
+        $this->logger?->warning(
+            'SES {notification_type} notification has no valid Mautic email ID; the contact will be updated, but per-email statistics cannot be attributed.',
+            [
+                'notification_type' => $notificationType,
+                'ses_message_id'    => $payload['mail']['messageId'] ?? null,
+            ]
+        );
     }
 }
