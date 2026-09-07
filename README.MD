@@ -161,7 +161,8 @@ To receive feedback from Amazon SES regarding bounces and complaints, you need t
    ```
 
 4. Ensure your topic sends notifications for bounces, complaints, and delivery status.
-5. Test your callback configuration by sending test emails and reviewing Mautic logs to verify feedback is processed correctly.
+5. For classic identity-based SNS notifications, enable **Include original headers** for bounce and complaint notifications on the verified SES identity. Mautic uses the `X-EMAIL-ID` header to attribute feedback to the email statistics. Configuration-set event publishing can use the `X-EMAIL-ID` message tag added by this plugin instead.
+6. Test your callback configuration by sending test emails and reviewing Mautic logs to verify feedback is processed correctly.
 
 ---
 
