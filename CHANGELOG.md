@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
+## [1.0.39] - 2026-09-07
+### Fixed
+- Merged Fix per-email bounce attribution when SES omits headers- #154
+  https://github.com/pm-pmaas/etailors_amazon_ses/pull/154.
+
 ## [1.0.38] - 2026-08-31
 ### Fixed
 - Fixed the release branch metadata so the plugin reports version `1.0.38`.
