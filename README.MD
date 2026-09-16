@@ -161,8 +161,13 @@ To receive feedback from Amazon SES regarding bounces and complaints, you need t
    ```
 
 4. Ensure your topic sends notifications for bounces, complaints, and delivery status.
-5. For classic identity-based SNS notifications, enable **Include original headers** for bounce and complaint notifications on the verified SES identity. Mautic uses the `X-EMAIL-ID` header to attribute feedback to the email statistics. Configuration-set event publishing can use the `X-EMAIL-ID` message tag added by this plugin instead.
-6. Test your callback configuration by sending test emails and reviewing Mautic logs to verify feedback is processed correctly.
+5. Add the expected SNS topic ARN(s) in **Mautic > Configuration > Email Settings > Service to send mail through > Allowed Amazon SNS topic ARNs**. The callback rejects SNS notifications when the topic ARN is not listed. Add one ARN per line or separate multiple ARNs with commas:
+
+   ```text
+   arn:aws:sns:<region>:<account-id>:<topic-name>
+   ```
+6. For classic identity-based SNS notifications, enable **Include original headers** for bounce and complaint notifications on the verified SES identity. Mautic uses the `X-EMAIL-ID` header to attribute feedback to the email statistics. Configuration-set event publishing can use the `X-EMAIL-ID` message tag added by this plugin instead.
+7. Test your callback configuration by sending test emails and reviewing Mautic logs to verify feedback is processed correctly.
 
 ---
 

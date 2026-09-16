@@ -29,6 +29,7 @@ use Symfony\Component\Mailer\Transport\Dsn;
 use Symfony\Contracts\HttpClient\Exception\TransportExceptionInterface;
 use Symfony\Contracts\HttpClient\HttpClientInterface;
 use Symfony\Contracts\Translation\TranslatorInterface;
+use Throwable;
 
 class CallbackSubscriber implements EventSubscriberInterface
 {
@@ -98,17 +99,23 @@ class CallbackSubscriber implements EventSubscriberInterface
             return;
         }
 
-        $type = '';
-        if (array_key_exists('Type', $payload)) {
-            $type = $payload['Type'];
-        } elseif (array_key_exists('eventType', $payload)) {
-            $type = $payload['eventType'];
-        } elseif (array_key_exists('notificationType', $payload)) {
-            $type = $payload['notificationType'];
-        } else {
+        if (!array_key_exists('Type', $payload)) {
             $event->setResponse(
                 $this->createResponse(
                     $this->translator->trans('mautic.amazonses.plugin.sns.callback.json.invalid_payload_type', [], 'validators'),
+                    false
+                )
+            );
+
+            return;
+        }
+
+        $type = (string) $payload['Type'];
+
+        if (!$this->isAuthenticatedSnsPayload($payload)) {
+            $event->setResponse(
+                $this->createResponse(
+                    'SNS payload authentication failed',
                     false
                 )
             );
@@ -147,6 +154,196 @@ class CallbackSubscriber implements EventSubscriberInterface
             $statusCode,
             ['content-type' => 'application/json']
         );
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     */
+    private function isAuthenticatedSnsPayload(array $payload): bool
+    {
+        if (!$this->hasRequiredSnsFields($payload)) {
+            $this->logger?->warning('Rejected SNS payload because required authentication fields are missing.');
+
+            return false;
+        }
+
+        if (!$this->isAllowedSnsTopicArn((string) $payload['TopicArn'])) {
+            $this->logger?->warning('Rejected SNS payload because the topic ARN is not allowed.', [
+                'topic_arn' => $payload['TopicArn'],
+            ]);
+
+            return false;
+        }
+
+        $signingCertUrl = (string) $payload['SigningCertURL'];
+        if (!$this->isTrustedAwsSnsCertificateUrl($signingCertUrl)) {
+            $this->logger?->warning('Rejected SNS payload because the signing certificate URL is not trusted.', [
+                'signing_cert_url' => $signingCertUrl,
+            ]);
+
+            return false;
+        }
+
+        if (!$this->hasValidSnsSignature($payload, $signingCertUrl)) {
+            $this->logger?->warning('Rejected SNS payload because signature verification failed.', [
+                'message_id' => $payload['MessageId'] ?? null,
+                'topic_arn'  => $payload['TopicArn'] ?? null,
+            ]);
+
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     */
+    private function hasRequiredSnsFields(array $payload): bool
+    {
+        foreach (['Type', 'Message', 'MessageId', 'TopicArn', 'Timestamp', 'SignatureVersion', 'Signature', 'SigningCertURL'] as $field) {
+            if (!isset($payload[$field]) || '' === (string) $payload[$field]) {
+                return false;
+            }
+        }
+
+        if (!in_array($payload['Type'], ['Notification', 'SubscriptionConfirmation', 'UnsubscribeConfirmation'], true)) {
+            return false;
+        }
+
+        if (in_array($payload['Type'], ['SubscriptionConfirmation', 'UnsubscribeConfirmation'], true)) {
+            foreach (['SubscribeURL', 'Token'] as $field) {
+                if (!isset($payload[$field]) || '' === (string) $payload[$field]) {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    private function isAllowedSnsTopicArn(string $topicArn): bool
+    {
+        $allowedTopicArns = $this->getAllowedSnsTopicArns();
+
+        if ([] === $allowedTopicArns) {
+            return false;
+        }
+
+        return in_array($topicArn, $allowedTopicArns, true);
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function getAllowedSnsTopicArns(): array
+    {
+        $configuredTopicArns = $this->coreParametersHelper->get('amazon_ses_sns_topic_arns', []);
+
+        if (is_string($configuredTopicArns)) {
+            $configuredTopicArns = preg_split('/[\r\n,]+/', $configuredTopicArns) ?: [];
+        }
+
+        if (!is_array($configuredTopicArns)) {
+            return [];
+        }
+
+        return array_values(array_filter(array_map(
+            static fn ($topicArn): string => trim((string) $topicArn),
+            $configuredTopicArns
+        )));
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     */
+    private function hasValidSnsSignature(array $payload, string $signingCertUrl): bool
+    {
+        $signature = base64_decode((string) $payload['Signature'], true);
+        if (false === $signature) {
+            return false;
+        }
+
+        try {
+            $certificate = $this->client->request('GET', $signingCertUrl)->getContent();
+        } catch (Throwable $e) {
+            $this->logger?->warning('Unable to retrieve SNS signing certificate.', ['reason' => $e->getMessage()]);
+
+            return false;
+        }
+
+        $publicKey = openssl_pkey_get_public($certificate);
+        if (false === $publicKey) {
+            return false;
+        }
+
+        $algorithm = match ((string) $payload['SignatureVersion']) {
+            '1'     => OPENSSL_ALGO_SHA1,
+            '2'     => OPENSSL_ALGO_SHA256,
+            default => null,
+        };
+
+        if (null === $algorithm) {
+            return false;
+        }
+
+        return 1 === openssl_verify($this->getSnsStringToSign($payload), $signature, $publicKey, $algorithm);
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     */
+    private function getSnsStringToSign(array $payload): string
+    {
+        $fields = match ($payload['Type']) {
+            'Notification' => isset($payload['Subject'])
+                ? ['Message', 'MessageId', 'Subject', 'Timestamp', 'TopicArn', 'Type']
+                : ['Message', 'MessageId', 'Timestamp', 'TopicArn', 'Type'],
+            'SubscriptionConfirmation', 'UnsubscribeConfirmation' => ['Message', 'MessageId', 'SubscribeURL', 'Timestamp', 'Token', 'TopicArn', 'Type'],
+            default => [],
+        };
+
+        $stringToSign = '';
+        foreach ($fields as $field) {
+            $stringToSign .= $field."\n".$payload[$field]."\n";
+        }
+
+        return $stringToSign;
+    }
+
+    private function isTrustedAwsSnsCertificateUrl(string $url): bool
+    {
+        if ('' === $url) {
+            return false;
+        }
+
+        $parts = parse_url($url);
+        if (false === $parts || !isset($parts['scheme'], $parts['host'], $parts['path'])) {
+            return false;
+        }
+
+        if ('https' !== strtolower($parts['scheme'])) {
+            return false;
+        }
+
+        if (isset($parts['user']) || isset($parts['pass']) || isset($parts['query']) || isset($parts['fragment'])) {
+            return false;
+        }
+
+        if (isset($parts['port']) && 443 !== (int) $parts['port']) {
+            return false;
+        }
+
+        $host = strtolower($parts['host']);
+        if ('localhost' === $host || filter_var($host, FILTER_VALIDATE_IP)) {
+            return false;
+        }
+
+        if (!preg_match('/^sns(\.[a-z0-9-]+)?\.amazonaws\.com(\.cn)?$/', $host)) {
+            return false;
+        }
+
+        return 1 === preg_match('#^/SimpleNotificationService-[A-Za-z0-9_-]+\.pem$#', $parts['path']);
     }
 
     /**
