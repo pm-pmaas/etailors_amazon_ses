@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
-## [Unreleased]
+## [1.0.40] - 2026-09-21
 ### Security
 - Authenticate SNS webhook signatures with AWS's maintained validator and require an exact allowed topic ARN before processing feedback.
 
