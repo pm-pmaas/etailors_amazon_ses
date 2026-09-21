@@ -21,6 +21,7 @@ use Mautic\LeadBundle\Entity\Lead;
 use Mautic\LeadBundle\Model\DoNotContact as DncModel;
 use Mautic\LeadBundle\Model\LeadModel;
 use MauticPlugin\AmazonSesBundle\Helper\MauticEmailId;
+use MauticPlugin\AmazonSesBundle\Helper\SnsWebhookAuthenticator;
 use MauticPlugin\AmazonSesBundle\Mailer\Transport\AmazonSesTransport;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\EventDispatcher\EventSubscriberInterface;
@@ -45,6 +46,7 @@ class CallbackSubscriber implements EventSubscriberInterface
         private ContactFinder $finder,
         private DncModel $dncModel,
         private LeadModel $leadModel,
+        private SnsWebhookAuthenticator $snsWebhookAuthenticator,
         TranslatorInterface $translator,
         ?LoggerInterface $logger = null,
     ) {
@@ -98,20 +100,21 @@ class CallbackSubscriber implements EventSubscriberInterface
             return;
         }
 
-        $type = '';
-        if (array_key_exists('Type', $payload)) {
-            $type = $payload['Type'];
-        } elseif (array_key_exists('eventType', $payload)) {
-            $type = $payload['eventType'];
-        } elseif (array_key_exists('notificationType', $payload)) {
-            $type = $payload['notificationType'];
-        } else {
+        if (!array_key_exists('Type', $payload)) {
             $event->setResponse(
                 $this->createResponse(
                     $this->translator->trans('mautic.amazonses.plugin.sns.callback.json.invalid_payload_type', [], 'validators'),
                     false
                 )
             );
+
+            return;
+        }
+
+        $type = (string) $payload['Type'];
+        if (!$this->snsWebhookAuthenticator->authenticate($payload, $this->getAllowedSnsTopicArns($dsn))) {
+            $this->logger?->warning('Rejected unauthenticated Amazon SNS webhook.');
+            $event->setResponse(new Response('Invalid SNS notification', Response::HTTP_FORBIDDEN));
 
             return;
         }
@@ -126,6 +129,26 @@ class CallbackSubscriber implements EventSubscriberInterface
 
         $this->logger->debug('end processCallbackRequest - Amazon SNS Webhook');
         $event->setResponse($eventResponse);
+    }
+
+    /** @return list<string> */
+    private function getAllowedSnsTopicArns(Dsn $dsn): array
+    {
+        $configured = $dsn->getOption('sns_topic_arn')
+            ?? $this->coreParametersHelper->get('amazon_ses_sns_topic_arns', []);
+
+        if (is_string($configured)) {
+            $configured = preg_split('/[\r\n,]+/', $configured, -1, PREG_SPLIT_NO_EMPTY) ?: [];
+        }
+
+        if (!is_array($configured)) {
+            return [];
+        }
+
+        return array_values(array_filter(array_map(
+            static fn (mixed $topicArn): string => trim((string) $topicArn),
+            $configured,
+        )));
     }
 
     /**

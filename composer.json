@@ -26,6 +26,7 @@
         "php": ">=8.1.0",
         "mautic/core-lib": "^5.0 || ^6.0 || ^7.0",
         "composer/installers": "^2.0",
+        "aws/aws-php-sns-message-validator": "^1.10",
         "aws/aws-sdk-php": "^3.0"
     },
     "require-dev": {
