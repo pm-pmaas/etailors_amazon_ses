@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
+## [Unreleased]
+### Fixed
+- `CallbackSubscriber` now unescapes Mautic's `%%` in `mailer_dsn` before parsing it, so an `sns_topic_arn` DSN option saved through the Email settings UI (stored as `arn%%3Aaws%%3A...`) matches the SNS `TopicArn` instead of decoding to `arn%:aws%:...` and rejecting every callback with 403.
+
 ## [1.0.40] - 2026-09-21
 ### Security
 - Authenticate SNS webhook signatures with AWS's maintained validator and require an exact allowed topic ARN before processing feedback.
