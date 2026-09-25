@@ -66,7 +66,8 @@ class CallbackSubscriber implements EventSubscriberInterface
 
     public function processCallbackRequest(TransportWebhookEvent $event): void
     {
-        $dsn = Dsn::fromString($this->coreParametersHelper->get('mailer_dsn'));
+        // Mautic stores the DSN with % escaped as %% (see MailerDsnEnvVarProcessor); undo that before parsing
+        $dsn = Dsn::fromString(str_replace('%%', '%', (string) $this->coreParametersHelper->get('mailer_dsn')));
 
         if (AmazonSesTransport::MAUTIC_AMAZONSES_API_SCHEME !== $dsn->getScheme()) {
             return;
