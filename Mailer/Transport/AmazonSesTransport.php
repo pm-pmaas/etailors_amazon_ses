@@ -33,6 +33,12 @@ use Mautic\EmailBundle\Entity\Email as MauticEmailEntity;
 use Doctrine\ORM\EntityManagerInterface;
 use Mautic\CoreBundle\Helper\PathsHelper;
 use Symfony\Component\Mailer\Envelope;
+use MauticPlugin\AmazonSesBundle\Mailer\Bulk\BulkBatcher;
+use MauticPlugin\AmazonSesBundle\Mailer\Bulk\BulkSender;
+use MauticPlugin\AmazonSesBundle\Mailer\Bulk\DeliveryStore;
+use MauticPlugin\AmazonSesBundle\Mailer\Bulk\IneligibleMessage;
+use MauticPlugin\AmazonSesBundle\Mailer\Bulk\SharedTemplateCompiler;
+use Psr\Log\NullLogger;
 
 class AmazonSesTransport extends AbstractTransport implements TokenTransportInterface
 {
@@ -97,6 +103,7 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
     private LoggerInterface $logger;
 
     private array $settings;
+    private ?SharedTemplateCompiler $compiler = null;
 
     public function __construct(
         SesV2Client $amazonclient,
@@ -105,9 +112,11 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
         ?EventDispatcherInterface $dispatcher = null,
         ?LoggerInterface $logger = null,
         $settings = [],
+        private ?DeliveryStore $deliveryStore = null,
+        private ?BulkSender $bulkSender = null,
     ) {
         parent::__construct($dispatcher, $logger);
-        $this->logger     = $logger;
+        $this->logger     = $logger ?? new NullLogger();
         $this->client     = $amazonclient;
         $this->dispatcher = $dispatcher;
         $this->entityManager = $entityManager;
@@ -153,8 +162,42 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
             $this->message = $email;
             $this->envelope = $message->getEnvelope();
 
+            $scope = null;
+            $ids = [];
+            if ('auto' === ($this->settings['bulk'] ?? 'off') && $this->canIdentifyRecipients($email)) {
+                $scope = BulkSender::scope($this->client);
+                foreach ($email->getMetadata() as $recipient => $data) {
+                    $ids[] = $this->deliveryId($scope, $recipient, $data);
+                }
+                $existing = $this->deliveryStore?->existingIds($ids, $scope) ?? [];
+                if ($existing) {
+                    try {
+                        // Replay uses saved content. Only recipients whose rows are missing need current Email fields.
+                        if (count($existing) < count($ids)) {
+                            $this->updateEmailFields($email);
+                        }
+                        $this->sendWithBulkAdapter($scope, $ids, $existing);
+                    } catch (\Throwable $e) {
+                        // Existing ownership must not escape to Mautic's full-message resend under new tracking hashes.
+                        $this->logger->error('SES outbox replay stopped; recover saved recipients with mautic:ses:bulk retry.', ['exception' => $e]);
+                    }
+
+                    return;
+                }
+            }
+
             // Use centralized method for updating From address
             $this->updateEmailFields($email);
+
+            if (null !== $scope) {
+                $reason = $this->bulkEligibilityReason($scope);
+                if (null === $reason) {
+                    $this->sendWithBulkAdapter($scope, $ids);
+
+                    return;
+                }
+                $this->logger->info('SES raw sending: message is not eligible for shared templates.', ['reason' => $reason, 'email_id' => $this->getEmailIdFromMetadata($email->getMetadata())]);
+            }
 
             $failures = [];
 
@@ -213,6 +256,7 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
 
                             $retryCommands = $batchFailures;
                             $batchFailures = [];
+                            $this->acquireTokens($bucketFile, count($retryCommands), $rate);
                             $retryPool = new CommandPool($this->client, $retryCommands, [
                                 'concurrency' => count($retryCommands),
                                 'fulfilled' => function (Result $result, $iteratorId) {
@@ -262,6 +306,280 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
             $this->logger->info($exception);
             throw new TransportException(sprintf('Unable to send an email: %s .', $exception->getMessage(), $exception->getCode()));
         }
+    }
+
+    private function canIdentifyRecipients(MauticMessage $message): bool
+    {
+        if (!$message->getMetadata()) {
+            return false;
+        }
+        foreach ($message->getMetadata() as $data) {
+            if (empty($data['hashId']) || !is_string($data['hashId']) || strlen($data['hashId']) > 191 || empty($data['emailId'])) {
+                $this->logger->info('SES raw sending: recipient metadata has no durable delivery identity.');
+
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * @param list<string>        $ids
+     * @param array<string, true> $existing already-owned recipients must not be recompiled
+     */
+    private function sendWithBulkAdapter(string $scope, array $ids, array $existing = []): void
+    {
+        if (!$this->deliveryStore || !$this->bulkSender) {
+            throw new \LogicException('SES bulk services are not configured.');
+        }
+        $this->deliveryStore->assertInstalled();
+        BulkSender::assertSupported($this->client);
+        $this->deliveryStore->expireClaims($scope);
+        [$limit] = $this->bulkWindow();
+        // Every recipient is saved in one transaction before the first request. Up to the commit a failure leaves nothing
+        // behind, so the exception can go to Mautic, which counts the message as failed and sends it again later.
+        $this->deliveryStore->enqueueBatches((new BulkBatcher())->batches($this->bulkDeliveries($scope, $existing), $limit), $scope);
+        $emailId = $this->getEmailIdFromMetadata($this->message->getMetadata());
+        try {
+            // Read what actually won the inserts, including content another worker saved first.
+            $this->sendSavedRows($this->deliveryStore->dueForIds($ids, $scope));
+        } catch (\Throwable $e) {
+            // From here on the outbox owns every recipient: submitted ones are recorded or expire to unknown, the others
+            // stay due for mautic:ses:bulk retry. Throwing would make Mautic send the whole message again under new
+            // tracking hashes, which the outbox cannot recognise, so recipients SES accepted would get it twice.
+            $this->logger->error('SES bulk sending stopped after the recipients were saved; mautic:ses:bulk retry submits the ones left.', ['email_id' => $emailId, 'exception' => $e]);
+
+            return;
+        }
+        $this->logger->info('SES transport batch persisted and processed.', ['email_id' => $emailId, 'bulk' => 'auto']);
+    }
+
+    /**
+     * Requests in a window can leave together. Limit the whole window to at most one second of the configured rate;
+     * the sender reserves its full recipient quota before queuing any requests and settles it before the next window.
+     *
+     * @return array{int, int} recipients per request, requests in flight
+     */
+    private function bulkWindow(): array
+    {
+        $rate = max(1, (int) ($this->settings['maxSendRate'] ?? 14));
+        $concurrency = min($rate, max(1, (int) ($this->settings['bulkConcurrency'] ?? 2)));
+
+        return [min(50, (int) ($this->settings['bulkBatchSize'] ?? 50), max(1, intdiv($rate, $concurrency))), $concurrency];
+    }
+
+    /** Retry commands and first submissions share precisely the same limiter. */
+    private function acquireRecipientQuota(int $recipients): void
+    {
+        $rate = max(1, (int) ($this->settings['maxSendRate'] ?? 14));
+        $bucket = $this->pathsHelper->getSystemPath('cache', true).'/ses_token_bucket.json';
+        while ($recipients > 0) {
+            $count = min($recipients, $rate);
+            $this->acquireTokens($bucket, $count, $rate);
+            $recipients -= $count;
+        }
+    }
+
+    /** Used by the bounded cron recovery command; never retries unknown acceptance. */
+    public function retryBulk(int $limit = 1000): int
+    {
+        if ('auto' !== ($this->settings['bulk'] ?? 'off') || !$this->deliveryStore || !$this->bulkSender) {
+            throw new \LogicException('Enable bulk=auto to process the SES outbox.');
+        }
+        $this->deliveryStore->assertInstalled();
+        BulkSender::assertSupported($this->client);
+        $scope = BulkSender::scope($this->client);
+        $this->deliveryStore->expireClaims($scope);
+        $due = $this->deliveryStore->due($scope, $limit);
+        $this->sendSavedRows($due);
+
+        return count($due);
+    }
+
+    /** Queue replays and cron recovery both batch persisted content, never newly rendered replacements. */
+    private function sendSavedRows(iterable $rows): void
+    {
+        $deliveries = (function () use ($rows): \Generator {
+            $content = null;
+            foreach ($rows as $row) {
+                // Shared content is immutable. Raw content can be dropped by another worker, so always reread it.
+                if (null === $content || $content['id'] !== $row['content_id'] || 'raw' === $content['operation']) {
+                    $content = $this->deliveryStore->content($row['content_id']);
+                }
+                if (null === $content['payload']) {
+                    // Another process made this raw delivery final since due() listed it, so its claim would fail anyway.
+                    continue;
+                }
+                yield ['id' => $row['id'], 'email_id' => $row['email_id'], 'operation' => $content['operation'], 'common' => $content['payload'], 'entry' => json_decode($row['entry'], true, 512, JSON_THROW_ON_ERROR)];
+            }
+        })();
+        [$count, $concurrency] = $this->bulkWindow();
+        // One send() call for all batches keeps up to $concurrency requests in flight.
+        $batches = (static function (\Generator $batches): \Generator {
+            foreach ($batches as $batch) {
+                yield array_column($batch, 'id');
+            }
+        })((new BulkBatcher())->batches($deliveries, $count));
+        $this->bulkSender->send($this->client, $batches, fn (int $recipients) => $this->acquireRecipientQuota($recipients), $concurrency);
+    }
+
+    /** Judged on the first recipient only, before anything is persisted, charged or submitted. */
+    private function bulkEligibilityReason(string $scope): ?string
+    {
+        $metadata = $this->message->getMetadata();
+        $recipient = array_key_first($metadata);
+        try {
+            $this->bulkEntry($scope, $recipient, $metadata[$recipient]);
+        } catch (IneligibleMessage $e) {
+            return $e->getMessage();
+        }
+
+        return null;
+    }
+
+    /** @param array<string, true> $existing */
+    private function bulkDeliveries(string $scope, array $existing = []): \Generator
+    {
+        foreach ($this->message->getMetadata() as $recipient => $data) {
+            if (isset($existing[$this->deliveryId($scope, $recipient, $data)])) {
+                continue;
+            }
+            $reason = '';
+            try {
+                ['id' => $id, 'common' => $common, 'entry' => $entry] = $this->bulkEntry($scope, $recipient, $data);
+                $operation = 'bulk';
+            } catch (IneligibleMessage $e) {
+                $id = $this->deliveryId($scope, $recipient, $data);
+                $reason = $e->getMessage();
+                $common = $this->rawRecipient($recipient, $data);
+                $common['EmailTags'] = $this->deliveryTag($common['EmailTags'] ?? [], $id);
+                // Raw MIME can contain arbitrary bytes. Store the wire blob losslessly in JSON.
+                $common['Content']['Raw']['Data'] = base64_encode($common['Content']['Raw']['Data']);
+                $entry = [];
+                $operation = 'raw';
+            }
+            yield ['id' => $id, 'tracking_hash' => $data['hashId'], 'email_id' => (int) $data['emailId'], 'operation' => $operation, 'common' => $common, 'entry' => $entry, 'reason' => $reason];
+        }
+    }
+
+    /**
+     * @return array{id: string, common: array, entry: array}
+     *
+     * @throws IneligibleMessage
+     */
+    private function bulkEntry(string $scope, string $recipient, array $data): array
+    {
+        $id = $this->deliveryId($scope, $recipient, $data);
+        $this->compiler ??= new SharedTemplateCompiler();
+        $compiled = $this->compiler->compile($this->message, $data['tokens'] ?? []);
+        // Only headers need local replacement. Shared bodies are not rendered/serialized here.
+        $headers = clone $this->message;
+        $headers->clearMetadata();
+        $headers->html(null)->text(null)->subject('');
+        $headers->to(new Address($recipient, $data['name'] ?? ''));
+        $tokens = $data['tokens'] ?? [];
+        ksort($tokens);
+        MailHelper::searchReplaceTokens(array_keys($tokens), $tokens, $headers);
+        $common = [];
+        $this->addSesHeaders($common, $headers, $data);
+        // Mautic sets Return-Path from the custom return path or a bounce address. SES uses that header of a raw message
+        // only as the address for bounce and complaint notifications, and SendBulkEmail takes that address as a parameter.
+        if ($returnPath = $headers->getReturnPath()) {
+            if (isset($common['FeedbackForwardingEmailAddress']) && 0 !== strcasecmp($common['FeedbackForwardingEmailAddress'], $returnPath->getEncodedAddress())) {
+                throw new IneligibleMessage('return_path_conflict');
+            }
+            $common['FeedbackForwardingEmailAddress'] = $returnPath->getEncodedAddress();
+        }
+        $tags = $common['EmailTags'] ?? [];
+        unset($common['EmailTags']);
+        $tags = $this->deliveryTag($tags, $id);
+        $entry = [
+            'Destination' => ['ToAddresses' => $this->stringifyAddresses($headers->getTo())],
+            'ReplacementEmailContent' => ['ReplacementTemplate' => ['ReplacementTemplateData' => $compiled['data']]],
+            'ReplacementHeaders' => $this->bulkHeaders($headers),
+            'ReplacementTags' => $tags,
+        ];
+        $common['DefaultContent'] = ['Template' => ['TemplateContent' => $compiled['template'], 'TemplateData' => '{}']];
+        if (BulkBatcher::bytes(BulkBatcher::request($common, [$entry])) > BulkBatcher::MAX_BYTES) {
+            throw new IneligibleMessage('request_size');
+        }
+
+        return ['id' => $id, 'common' => $common, 'entry' => $entry];
+    }
+
+    private function deliveryId(string $scope, string $recipient, array $data): string
+    {
+        return hash('sha256', $scope.'|'.$data['emailId'].'|'.$data['hashId'].'|'.$recipient);
+    }
+
+    private function deliveryTag(array $tags, string $id): array
+    {
+        $tags = array_values(array_filter($tags, static fn (array $tag): bool => 'mautic_delivery_id' !== ($tag['Name'] ?? '')));
+        $tags[] = ['Name' => 'mautic_delivery_id', 'Value' => $id];
+
+        return $tags;
+    }
+
+    private function bulkHeaders(MauticMessage $message): array
+    {
+        $result = [];
+        foreach ($message->getHeaders()->all() as $header) {
+            $name = $header->getName();
+            if ($header instanceof MetadataHeader || in_array(strtolower($name), ['from', 'to', 'cc', 'bcc', 'reply-to', 'subject', 'date', 'message-id', 'mime-version', 'content-type', 'content-transfer-encoding'], true)) {
+                continue;
+            }
+            // Mautic 7 sets Sender to the From address. SES sets the envelope sender itself and RFC 5322 only requires Sender when it differs from From.
+            if ('sender' === strtolower($name)) {
+                if (0 !== strcasecmp($message->getSender()?->getAddress() ?? '', $message->getFrom()[0]->getAddress())) {
+                    throw new IneligibleMessage('sender_differs_from_from');
+                }
+                continue;
+            }
+            // Sent as FeedbackForwardingEmailAddress by bulkEntry().
+            if ('return-path' === strtolower($name)) {
+                continue;
+            }
+            if (!preg_match('/^(x-|list-)/i', $name) && !in_array(strtolower($name), ['precedence', 'feedback-id', 'auto-submitted'], true)) {
+                throw new IneligibleMessage('unsupported_header');
+            }
+            $value = $header->getBodyAsString();
+            // Mautic removes a custom header whose tokens resolve to nothing; SES requires a value.
+            if ('' === $value) {
+                continue;
+            }
+            if (strlen($name) > 126 || strlen($value) > 870 || preg_match('/[\r\n]/', $value)) {
+                throw new IneligibleMessage('header_size_or_folding');
+            }
+            // SES accepts printable ASCII only, without space or colon in the name (a tab in a value, for example, is refused).
+            if (!preg_match('/^[!-9;-~]+$/D', $name) || !preg_match('/^[ -~]+$/D', $value)) {
+                throw new IneligibleMessage('header_value');
+            }
+            $result[] = ['Name' => $name, 'Value' => $value];
+        }
+        if (count($result) > 15) {
+            throw new IneligibleMessage('header_count');
+        }
+
+        return $result;
+    }
+
+    private function rawRecipient(string $recipient, array $mailData): array
+    {
+        $sentMessage = clone $this->message;
+        $sentMessage->clearMetadata();
+        $sentMessage->updateLeadIdHash($mailData['hashId'] ?? null);
+        $sentMessage->to(new Address($recipient, $mailData['name'] ?? ''));
+        $tokens = $mailData['tokens'] ?? [];
+        ksort($tokens);
+        MailHelper::searchReplaceTokens(array_keys($tokens), $tokens, $sentMessage);
+        $this->updateEmailFields($sentMessage);
+        $payload = [];
+        $this->addSesHeaders($payload, $sentMessage, $mailData);
+        $payload['Destination'] = ['ToAddresses' => $this->stringifyAddresses($sentMessage->getTo()), 'CcAddresses' => $this->stringifyAddresses($sentMessage->getCc()), 'BccAddresses' => $this->stringifyAddresses($sentMessage->getBcc())];
+        $payload['Content'] = ['Raw' => ['Data' => $sentMessage->toString()]];
+
+        return $payload;
     }
 
     /**
@@ -440,88 +758,64 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
      */
     private function acquireTokens(string $bucketFile, int $tokens, int $rate): void
     {
-        while (true) {
-            $fh = @fopen($bucketFile, 'c+');
-            if (false === $fh) {
-                $message = sprintf(
-                    'Unable to open SES rate limit token bucket file "%s". Please verify that the Mautic cache directory is writable by the web server/PHP user.',
-                    $bucketFile
-                );
-                $this->logger->error($message);
+        $fh = @fopen($bucketFile, 'c+');
+        if (false === $fh) {
+            $message = sprintf(
+                'Unable to open SES rate limit token bucket file "%s". Please verify that the Mautic cache directory is writable by the web server/PHP user.',
+                $bucketFile
+            );
+            $this->logger->error($message);
 
-                throw new TransportException($message);
-            }
+            throw new TransportException($message);
+        }
 
-            if (!flock($fh, LOCK_EX)) {
-                fclose($fh);
-                $message = sprintf('Unable to lock SES rate limit token bucket file "%s".', $bucketFile);
-                $this->logger->error($message);
+        if (!flock($fh, LOCK_EX)) {
+            fclose($fh);
+            $message = sprintf('Unable to lock SES rate limit token bucket file "%s".', $bucketFile);
+            $this->logger->error($message);
 
-                throw new TransportException($message);
-            }
+            throw new TransportException($message);
+        }
 
-            $data = fread($fh, 256);
-            $bucket = $data ? json_decode($data, true) : null;
-            $now = microtime(true);
+        $data = fread($fh, 256);
+        $bucket = $data ? json_decode($data, true) : null;
+        $now = microtime(true);
 
-            if (!$bucket || !isset($bucket['tokens'], $bucket['last_time'])) {
-                $bucket = ['tokens' => 0.0, 'last_time' => $now];
-            }
+        if (!$bucket || !isset($bucket['tokens'], $bucket['last_time'])) {
+            $bucket = ['tokens' => 0.0, 'last_time' => $now];
+        }
 
-            // Refill tokens based on elapsed time, cap at rate
-            $elapsed = $now - $bucket['last_time'];
-            $bucket['tokens'] = min((float) $rate, $bucket['tokens'] + $elapsed * $rate);
-            $bucket['last_time'] = $now;
+        // Idle time repays existing reservations but does not accumulate capacity for a burst.
+        $elapsed = $now - $bucket['last_time'];
+        $bucket['tokens'] = min(0.0, (float) $bucket['tokens'] + $elapsed * $rate);
+        $bucket['last_time'] = $now;
 
-            if ($bucket['tokens'] >= $tokens) {
-                $bucket['tokens'] -= $tokens;
-                if (!ftruncate($fh, 0)) {
-                    flock($fh, LOCK_UN);
-                    fclose($fh);
-                    $message = sprintf('Unable to truncate SES rate limit token bucket file "%s".', $bucketFile);
-                    $this->logger->error($message);
+        // Reserve capacity while holding the lock so workers sharing this file queue behind the same debt.
+        // Wait outside the lock before submitting the reserved recipients.
+        $bucket['tokens'] -= $tokens;
+        $waitUs = (int) ceil((-$bucket['tokens'] / $rate) * 1_000_000);
 
-                    throw new TransportException($message);
-                }
-                rewind($fh);
-                if (false === fwrite($fh, json_encode($bucket))) {
-                    flock($fh, LOCK_UN);
-                    fclose($fh);
-                    $message = sprintf('Unable to write SES rate limit token bucket file "%s".', $bucketFile);
-                    $this->logger->error($message);
-
-                    throw new TransportException($message);
-                }
-                flock($fh, LOCK_UN);
-                fclose($fh);
-                return;
-            }
-
-            // Not enough tokens — save current state so next iteration sees elapsed time,
-            // then release lock and sleep outside
-            $deficit = $tokens - $bucket['tokens'];
-            $waitUs = (int) ceil(($deficit / $rate) * 1_000_000);
-
-            if (!ftruncate($fh, 0)) {
-                flock($fh, LOCK_UN);
-                fclose($fh);
-                $message = sprintf('Unable to truncate SES rate limit token bucket file "%s".', $bucketFile);
-                $this->logger->error($message);
-
-                throw new TransportException($message);
-            }
-            rewind($fh);
-            if (false === fwrite($fh, json_encode($bucket))) {
-                flock($fh, LOCK_UN);
-                fclose($fh);
-                $message = sprintf('Unable to write SES rate limit token bucket file "%s".', $bucketFile);
-                $this->logger->error($message);
-
-                throw new TransportException($message);
-            }
+        if (!ftruncate($fh, 0)) {
             flock($fh, LOCK_UN);
             fclose($fh);
+            $message = sprintf('Unable to truncate SES rate limit token bucket file "%s".', $bucketFile);
+            $this->logger->error($message);
 
+            throw new TransportException($message);
+        }
+        rewind($fh);
+        if (false === fwrite($fh, json_encode($bucket))) {
+            flock($fh, LOCK_UN);
+            fclose($fh);
+            $message = sprintf('Unable to write SES rate limit token bucket file "%s".', $bucketFile);
+            $this->logger->error($message);
+
+            throw new TransportException($message);
+        }
+        flock($fh, LOCK_UN);
+        fclose($fh);
+
+        if ($waitUs > 0) {
             usleep($waitUs);
         }
     }
@@ -569,8 +863,12 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
 
     private function setFrom(MauticMessage $email, \Mautic\EmailBundle\Entity\Email $emailEntity): MauticMessage
     {
-        $entityEmailFrom = $this->envelope->getSender()->getAddress();
-        $entityNameFrom = $this->envelope->getSender()->getName();
+        // The envelope sender is the Return-Path whenever Mautic sets one (mailer_return_path or a bounce address), so
+        // bulk=auto keeps the From address Mautic resolved. bulk=off keeps the envelope sender of 1.0.41.
+        $default = 'auto' === ($this->settings['bulk'] ?? 'off') ? ($email->getFrom()[0] ?? null) : null;
+        $default ??= $this->envelope->getSender();
+        $entityEmailFrom = $default->getAddress();
+        $entityNameFrom = $default->getName();
         if (!empty($emailEntity->getFromAddress())) {
             $entityEmailFrom = $emailEntity->getFromAddress();
         }

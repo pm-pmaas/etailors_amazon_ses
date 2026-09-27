@@ -20,6 +20,8 @@ use Symfony\Component\Mailer\Transport\TransportInterface;
 use Symfony\Contracts\Translation\TranslatorInterface;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 use Mautic\CoreBundle\Helper\PathsHelper;
+use MauticPlugin\AmazonSesBundle\Mailer\Bulk\BulkSender;
+use MauticPlugin\AmazonSesBundle\Mailer\Bulk\DeliveryStore;
 
 class AmazonSesTransportFactory extends AbstractTransportFactory
 {
@@ -37,7 +39,9 @@ class AmazonSesTransportFactory extends AbstractTransportFactory
         TranslatorInterface $translator,
         EntityManagerInterface $entityManager,
         PathsHelper $pathsHelper,
-        ?LoggerInterface $logger = null
+        ?LoggerInterface $logger = null,
+        private ?DeliveryStore $deliveryStore = null,
+        private ?BulkSender $bulkSender = null,
     ) {
         parent::__construct($eventDispatcher, null, $logger);
         $this->translator = $translator;
@@ -57,6 +61,7 @@ class AmazonSesTransportFactory extends AbstractTransportFactory
     public function create(Dsn $dsn): TransportInterface
     {
         if (AmazonSesTransport::MAUTIC_AMAZONSES_API_SCHEME === $dsn->getScheme()) {
+            $bulkOptions = self::bulkOptions($dsn);
             $client = $this->initAmazonClient($dsn);
     
             $manualRate = $dsn->getOption('ratelimit');
@@ -87,11 +92,31 @@ class AmazonSesTransportFactory extends AbstractTransportFactory
                 $this->pathsHelper,
                 $this->dispatcher,
                 $this->logger,
-                ['maxSendRate' => $effectiveRate, 'batchMultiplier' => $batchMultiplier]
+                ['maxSendRate' => $effectiveRate, 'batchMultiplier' => $batchMultiplier] + $bulkOptions,
+                $this->deliveryStore,
+                $this->bulkSender,
             );
         }
 
         throw new UnsupportedSchemeException($dsn, 'Amazon SES', $this->getSupportedSchemes());
+    }
+
+    public static function bulkOptions(Dsn $dsn): array
+    {
+        $mode = (string) $dsn->getOption('bulk', 'off');
+        if (!in_array($mode, ['off', 'auto'], true)) {
+            throw new InvalidArgumentException('SES bulk must be off or auto.');
+        }
+        $size = filter_var($dsn->getOption('bulk_batch_size', 50), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1, 'max_range' => 50]]);
+        if (false === $size) {
+            throw new InvalidArgumentException('SES bulk_batch_size must be an integer between 1 and 50.');
+        }
+        $concurrency = filter_var($dsn->getOption('bulk_concurrency', 2), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1, 'max_range' => 10]]);
+        if (false === $concurrency) {
+            throw new InvalidArgumentException('SES bulk_concurrency must be an integer between 1 and 10.');
+        }
+
+        return ['bulk' => $mode, 'bulkBatchSize' => $size, 'bulkConcurrency' => $concurrency];
     }
 
     /**

@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
+## [Unreleased]
+### Added
+- Opt-in `bulk=auto` sending with shared SES templates, per-recipient raw fallback, configurable batch size and concurrency, and a durable outbox for delivery recovery.
+- `mautic:ses:bulk` commands to install, inspect, retry, reconcile statistics and prune the outbox. SNS delivery events update recorded recipients; ambiguous outcomes are never retried automatically.
+- Outbox entities and the `Version_1_0_42` migration. The plugin remains at 1.0.41; existing installations must run `mautic:ses:bulk install` before enabling bulk mode.
+
+### Changed
+- Pace raw and bulk submissions from the first request without accumulating an idle burst allowance. Bulk sends reserve each concurrent group together and complete it before reserving another; raw inline retries also charge the shared recipient rate limit.
+- Propagate nested SNS notification errors and recognize Send, Reject and Rendering Failure events.
+- Require `aws/aws-sdk-php:^3.325.1` for SES inline template content and replacement headers.
+
 ## [1.0.41] - 2026-09-25
 - `CallbackSubscriber` now unescapes Mautic's `%%` in `mailer_dsn` before parsing it, so an `sns_topic_arn` DSN option saved through the Email settings UI (stored as `arn%%3Aaws%%3A...`) matches the SNS `TopicArn` instead of decoding to `arn%:aws%:...` and rejecting every callback with 403.
 

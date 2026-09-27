@@ -26,6 +26,7 @@ return static function (ContainerConfigurator $configurator) {
 
     $excludes = [
         'Mailer/Transport/AmazonSesTransport.php',
+        'Mailer/Bulk/IneligibleMessage.php',
     ];
 
     $services->load('MauticPlugin\\AmazonSesBundle\\', '../')
@@ -38,5 +39,7 @@ return static function (ContainerConfigurator $configurator) {
         ->arg('$entityManager', service('doctrine.orm.entity_manager'))
         ->arg('$pathsHelper', service('mautic.helper.paths'))
         ->arg('$logger', service('logger'))
+        ->arg('$deliveryStore', service(\MauticPlugin\AmazonSesBundle\Mailer\Bulk\DeliveryStore::class))
+        ->arg('$bulkSender', service(\MauticPlugin\AmazonSesBundle\Mailer\Bulk\BulkSender::class))
         ->tag('mailer.transport_factory');
 };
