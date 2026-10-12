@@ -34,6 +34,7 @@ use Symfony\Contracts\Translation\TranslatorInterface;
 class CallbackSubscriber implements EventSubscriberInterface
 {
     private TranslatorInterface $translator;
+    private SnsWebhookAuthenticator $snsWebhookAuthenticator;
     /**
      * @var LoggerInterface|null
      */
@@ -46,12 +47,13 @@ class CallbackSubscriber implements EventSubscriberInterface
         private ContactFinder $finder,
         private DncModel $dncModel,
         private LeadModel $leadModel,
-        private SnsWebhookAuthenticator $snsWebhookAuthenticator,
         TranslatorInterface $translator,
         ?LoggerInterface $logger = null,
+        ?SnsWebhookAuthenticator $snsWebhookAuthenticator = null,
     ) {
-        $this->translator = $translator;
-        $this->logger     = $logger;
+        $this->translator              = $translator;
+        $this->logger                  = $logger;
+        $this->snsWebhookAuthenticator = $snsWebhookAuthenticator ?? new SnsWebhookAuthenticator();
     }
 
     /**

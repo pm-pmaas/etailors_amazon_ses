@@ -9,6 +9,8 @@
 declare(strict_types=1);
 
 use Mautic\CoreBundle\DependencyInjection\MauticCoreExtension;
+use MauticPlugin\AmazonSesBundle\EventSubscriber\CallbackSubscriber;
+use MauticPlugin\AmazonSesBundle\Helper\SnsWebhookAuthenticator;
 use MauticPlugin\AmazonSesBundle\Mailer\Factory\AmazonSesTransportFactory;
 use Symfony\Component\DependencyInjection\Loader\Configurator\ContainerConfigurator;
 use function Symfony\Component\DependencyInjection\Loader\Configurator\service; 
@@ -30,6 +32,11 @@ return static function (ContainerConfigurator $configurator) {
 
     $services->load('MauticPlugin\\AmazonSesBundle\\', '../')
         ->exclude('../{'.implode(',', array_merge(MauticCoreExtension::DEFAULT_EXCLUDES, $excludes)).'}');
+
+    $services->get(CallbackSubscriber::class)
+        ->arg('$translator', service('translator'))
+        ->arg('$logger', service('logger'))
+        ->arg('$snsWebhookAuthenticator', service(SnsWebhookAuthenticator::class));
 
     $services->get(\MauticPlugin\AmazonSesBundle\Mailer\Factory\AmazonSesTransportFactory::class)
         ->arg('$transportCallback', service(\Mautic\EmailBundle\Model\TransportCallback::class))
