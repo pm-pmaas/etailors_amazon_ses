@@ -132,7 +132,7 @@ class CallbackSubscriber implements EventSubscriberInterface
 
         $type = (string) $payload['Type'];
         if (!$this->snsWebhookAuthenticator->authenticate($payload, $this->getAllowedSnsTopicArns($dsn))) {
-            $this->logger?->warning('Rejected unauthenticated Amazon SNS webhook.', [
+            $this->logger?->error('Rejected unauthenticated Amazon SNS webhook.', [
                 'reason'            => $this->snsWebhookAuthenticator->getLastFailureReason(),
                 'type'              => $payload['Type'] ?? null,
                 'topic_arn'         => $payload['TopicArn'] ?? null,
