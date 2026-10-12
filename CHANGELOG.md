@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
+## [1.0.42] - 2026-10-12
+### Fixed
+- Fixed `CallbackSubscriber` construction for both legacy translator/logger and authenticator-first generated service container argument orders, preventing SNS callbacks from failing with a `TypeError` before subscription confirmation can be processed.
+- Fixed SNS authentication diagnostics by logging the concrete failure reason for `403` callback rejections at production-visible error level and fetching signing certificates through Symfony's HTTP client instead of relying on PHP stream defaults.
+- Fixed SNS callback authentication when the optional `aws/aws-php-sns-message-validator` package is not installed in a copied plugin deployment by verifying SNS signatures natively with OpenSSL.
+
 ## [1.0.41] - 2026-09-25
 - `CallbackSubscriber` now unescapes Mautic's `%%` in `mailer_dsn` before parsing it, so an `sns_topic_arn` DSN option saved through the Email settings UI (stored as `arn%%3Aaws%%3A...`) matches the SNS `TopicArn` instead of decoding to `arn%:aws%:...` and rejecting every callback with 403.
 

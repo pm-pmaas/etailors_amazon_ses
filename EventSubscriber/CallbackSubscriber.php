@@ -34,6 +34,7 @@ use Symfony\Contracts\Translation\TranslatorInterface;
 class CallbackSubscriber implements EventSubscriberInterface
 {
     private TranslatorInterface $translator;
+    private SnsWebhookAuthenticator $snsWebhookAuthenticator;
     /**
      * @var LoggerInterface|null
      */
@@ -46,12 +47,29 @@ class CallbackSubscriber implements EventSubscriberInterface
         private ContactFinder $finder,
         private DncModel $dncModel,
         private LeadModel $leadModel,
-        private SnsWebhookAuthenticator $snsWebhookAuthenticator,
-        TranslatorInterface $translator,
-        ?LoggerInterface $logger = null,
+        TranslatorInterface|SnsWebhookAuthenticator $translator,
+        LoggerInterface|TranslatorInterface|null $logger = null,
+        SnsWebhookAuthenticator|LoggerInterface|null $snsWebhookAuthenticator = null,
     ) {
-        $this->translator = $translator;
-        $this->logger     = $logger;
+        if ($translator instanceof SnsWebhookAuthenticator) {
+            if (!$logger instanceof TranslatorInterface) {
+                throw new \InvalidArgumentException(sprintf(
+                    'Expected argument 8 to be an instance of %s when argument 7 is an instance of %s.',
+                    TranslatorInterface::class,
+                    SnsWebhookAuthenticator::class
+                ));
+            }
+
+            $this->translator              = $logger;
+            $this->logger                  = $snsWebhookAuthenticator instanceof LoggerInterface ? $snsWebhookAuthenticator : null;
+            $this->snsWebhookAuthenticator = $translator;
+
+            return;
+        }
+
+        $this->translator              = $translator;
+        $this->logger                  = $logger instanceof LoggerInterface ? $logger : null;
+        $this->snsWebhookAuthenticator = $snsWebhookAuthenticator instanceof SnsWebhookAuthenticator ? $snsWebhookAuthenticator : new SnsWebhookAuthenticator($this->client);
     }
 
     /**
@@ -114,7 +132,12 @@ class CallbackSubscriber implements EventSubscriberInterface
 
         $type = (string) $payload['Type'];
         if (!$this->snsWebhookAuthenticator->authenticate($payload, $this->getAllowedSnsTopicArns($dsn))) {
-            $this->logger?->warning('Rejected unauthenticated Amazon SNS webhook.');
+            $this->logger?->error('Rejected unauthenticated Amazon SNS webhook.', [
+                'reason'            => $this->snsWebhookAuthenticator->getLastFailureReason(),
+                'type'              => $payload['Type'] ?? null,
+                'topic_arn'         => $payload['TopicArn'] ?? null,
+                'signing_cert_host' => $this->getUrlHost($payload['SigningCertURL'] ?? null),
+            ]);
             $event->setResponse(new Response('Invalid SNS notification', Response::HTTP_FORBIDDEN));
 
             return;
@@ -150,6 +173,17 @@ class CallbackSubscriber implements EventSubscriberInterface
             static fn (mixed $topicArn): string => trim((string) $topicArn),
             $configured,
         )));
+    }
+
+    private function getUrlHost(mixed $url): ?string
+    {
+        if (!is_string($url)) {
+            return null;
+        }
+
+        $host = parse_url($url, PHP_URL_HOST);
+
+        return is_string($host) ? $host : null;
     }
 
     /**
