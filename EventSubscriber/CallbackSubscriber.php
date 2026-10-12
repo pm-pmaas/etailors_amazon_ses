@@ -47,13 +47,29 @@ class CallbackSubscriber implements EventSubscriberInterface
         private ContactFinder $finder,
         private DncModel $dncModel,
         private LeadModel $leadModel,
-        TranslatorInterface $translator,
-        ?LoggerInterface $logger = null,
-        ?SnsWebhookAuthenticator $snsWebhookAuthenticator = null,
+        TranslatorInterface|SnsWebhookAuthenticator $translator,
+        LoggerInterface|TranslatorInterface|null $logger = null,
+        SnsWebhookAuthenticator|LoggerInterface|null $snsWebhookAuthenticator = null,
     ) {
+        if ($translator instanceof SnsWebhookAuthenticator) {
+            if (!$logger instanceof TranslatorInterface) {
+                throw new \InvalidArgumentException(sprintf(
+                    'Expected argument 8 to be an instance of %s when argument 7 is an instance of %s.',
+                    TranslatorInterface::class,
+                    SnsWebhookAuthenticator::class
+                ));
+            }
+
+            $this->translator              = $logger;
+            $this->logger                  = $snsWebhookAuthenticator instanceof LoggerInterface ? $snsWebhookAuthenticator : null;
+            $this->snsWebhookAuthenticator = $translator;
+
+            return;
+        }
+
         $this->translator              = $translator;
-        $this->logger                  = $logger;
-        $this->snsWebhookAuthenticator = $snsWebhookAuthenticator ?? new SnsWebhookAuthenticator($this->client);
+        $this->logger                  = $logger instanceof LoggerInterface ? $logger : null;
+        $this->snsWebhookAuthenticator = $snsWebhookAuthenticator instanceof SnsWebhookAuthenticator ? $snsWebhookAuthenticator : new SnsWebhookAuthenticator($this->client);
     }
 
     /**
