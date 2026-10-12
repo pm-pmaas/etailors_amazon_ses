@@ -22,12 +22,18 @@ final class SnsWebhookAuthenticatorTest extends TestCase
         $subject   = new SnsWebhookAuthenticator();
 
         self::assertTrue($subject->authenticate($payload, [self::TOPIC], $validator));
+        self::assertNull($subject->getLastFailureReason());
 
         $tampered            = $payload;
         $tampered['Message'] = '{"notificationType":"Complaint"}';
         self::assertFalse($subject->authenticate($tampered, [self::TOPIC], $validator));
+        self::assertStringStartsWith('SNS signature validation failed:', (string) $subject->getLastFailureReason());
+
         self::assertFalse($subject->authenticate($payload, [self::TOPIC.'-other'], $validator));
+        self::assertSame('SNS TopicArn is not allowed.', $subject->getLastFailureReason());
+
         self::assertFalse($subject->authenticate(['eventType' => 'Bounce'], [self::TOPIC], $validator));
+        self::assertSame('SNS payload is missing TopicArn.', $subject->getLastFailureReason());
     }
 
     /** @return array<string, string> */

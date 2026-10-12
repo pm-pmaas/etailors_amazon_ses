@@ -7,6 +7,7 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 ## [1.0.42] - 2026-10-12
 ### Fixed
 - Fixed `CallbackSubscriber` construction when Mautic's cached/generated service container still passes the legacy translator/logger arguments after upgrading from `1.0.41`, preventing SNS callbacks from failing with a `TypeError` before subscription confirmation can be processed.
+- Fixed SNS authentication diagnostics by logging the concrete failure reason for `403` callback rejections and fetching signing certificates through Symfony's HTTP client instead of relying on PHP stream defaults.
 
 ## [1.0.41] - 2026-09-25
 - `CallbackSubscriber` now unescapes Mautic's `%%` in `mailer_dsn` before parsing it, so an `sns_topic_arn` DSN option saved through the Email settings UI (stored as `arn%%3Aaws%%3A...`) matches the SNS `TopicArn` instead of decoding to `arn%:aws%:...` and rejecting every callback with 403.

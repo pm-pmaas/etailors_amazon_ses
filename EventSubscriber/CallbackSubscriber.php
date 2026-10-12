@@ -53,7 +53,7 @@ class CallbackSubscriber implements EventSubscriberInterface
     ) {
         $this->translator              = $translator;
         $this->logger                  = $logger;
-        $this->snsWebhookAuthenticator = $snsWebhookAuthenticator ?? new SnsWebhookAuthenticator();
+        $this->snsWebhookAuthenticator = $snsWebhookAuthenticator ?? new SnsWebhookAuthenticator($this->client);
     }
 
     /**
@@ -116,7 +116,12 @@ class CallbackSubscriber implements EventSubscriberInterface
 
         $type = (string) $payload['Type'];
         if (!$this->snsWebhookAuthenticator->authenticate($payload, $this->getAllowedSnsTopicArns($dsn))) {
-            $this->logger?->warning('Rejected unauthenticated Amazon SNS webhook.');
+            $this->logger?->warning('Rejected unauthenticated Amazon SNS webhook.', [
+                'reason'            => $this->snsWebhookAuthenticator->getLastFailureReason(),
+                'type'              => $payload['Type'] ?? null,
+                'topic_arn'         => $payload['TopicArn'] ?? null,
+                'signing_cert_host' => $this->getUrlHost($payload['SigningCertURL'] ?? null),
+            ]);
             $event->setResponse(new Response('Invalid SNS notification', Response::HTTP_FORBIDDEN));
 
             return;
@@ -152,6 +157,17 @@ class CallbackSubscriber implements EventSubscriberInterface
             static fn (mixed $topicArn): string => trim((string) $topicArn),
             $configured,
         )));
+    }
+
+    private function getUrlHost(mixed $url): ?string
+    {
+        if (!is_string($url)) {
+            return null;
+        }
+
+        $host = parse_url($url, PHP_URL_HOST);
+
+        return is_string($host) ? $host : null;
     }
 
     /**
