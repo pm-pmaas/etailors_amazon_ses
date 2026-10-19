@@ -6,6 +6,7 @@ namespace MauticPlugin\AmazonSesBundle\Tests\Unit\Mailer\Transport;
 
 use Mautic\EmailBundle\Entity\Email as MauticEmail;
 use Mautic\EmailBundle\Mailer\Message\MauticMessage;
+use Mautic\LeadBundle\Entity\Lead;
 use MauticPlugin\AmazonSesBundle\Mailer\Transport\AmazonSesTransport;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\NullLogger;
@@ -181,6 +182,39 @@ class AmazonSesTransportTest extends TestCase
         $this->assertSame('Metadata Sender', $from->getName());
     }
 
+    public function testUpdateEmailFieldsResolvesContactFieldTokensFromLeadId(): void
+    {
+        $emailEntity = (new MauticEmail())
+            ->setFromAddress('{contactfield=sender}')
+            ->setFromName('{contactfield=sender_name}');
+        $lead = new Lead();
+        $lead->setFields([
+            'core' => [
+                'sender' => [
+                    'type'  => 'email',
+                    'value' => 'lead-sender@example.com',
+                ],
+                'sender_name' => [
+                    'type'  => 'text',
+                    'value' => 'Lead Sender',
+                ],
+            ],
+        ]);
+        $transport = $this->createTransportWithEnvelopeAndEmailEntity($emailEntity, $lead);
+        $message = (new MauticMessage())
+            ->from(new Address('default@example.com', 'Default Sender'));
+
+        $this->invokeUpdateEmailFields($transport, $message, [
+            'emailId' => 123,
+            'leadId'  => 456,
+            'tokens'  => [],
+        ]);
+
+        $from = $message->getFrom()[0];
+        $this->assertSame('lead-sender@example.com', $from->getAddress());
+        $this->assertSame('Lead Sender', $from->getName());
+    }
+
     private function createTransportWithEnvelope(): AmazonSesTransport
     {
         $reflection = new \ReflectionClass(AmazonSesTransport::class);
@@ -195,23 +229,27 @@ class AmazonSesTransportTest extends TestCase
         return $transport;
     }
 
-    private function createTransportWithEnvelopeAndEmailEntity(MauticEmail $emailEntity): AmazonSesTransport
+    private function createTransportWithEnvelopeAndEmailEntity(MauticEmail $emailEntity, ?Lead $lead = null): AmazonSesTransport
     {
         $transport = $this->createTransportWithEnvelope();
-        $entityManager = new class($emailEntity) {
-            public function __construct(private MauticEmail $emailEntity)
+        $entityManager = new class($emailEntity, $lead) {
+            public function __construct(private MauticEmail $emailEntity, private ?Lead $lead)
             {
             }
 
             public function getRepository(string $className): object
             {
-                return new class($this->emailEntity) {
-                    public function __construct(private MauticEmail $emailEntity)
+                return new class($className, $this->emailEntity, $this->lead) {
+                    public function __construct(private string $className, private MauticEmail $emailEntity, private ?Lead $lead)
                     {
                     }
 
-                    public function find(int $id): MauticEmail
+                    public function find(int $id): MauticEmail|Lead|null
                     {
+                        if (Lead::class === $this->className) {
+                            return $this->lead;
+                        }
+
                         return $this->emailEntity;
                     }
                 };

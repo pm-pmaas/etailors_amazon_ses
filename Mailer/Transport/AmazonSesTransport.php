@@ -30,6 +30,7 @@ use Symfony\Component\Mailer\Transport\AbstractTransport;
 use Symfony\Component\Mime\Address;
 use Symfony\Component\Mime\Email;
 use Mautic\EmailBundle\Entity\Email as MauticEmailEntity;
+use Mautic\LeadBundle\Entity\Lead;
 use Doctrine\ORM\EntityManagerInterface;
 use Mautic\CoreBundle\Helper\PathsHelper;
 use Symfony\Component\Mailer\Envelope;
@@ -666,7 +667,22 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
             }
         }
 
-        return null;
+        return $this->getLeadFieldValue($field, $mailData);
+    }
+
+    private function getLeadFieldValue(string $field, array $mailData): mixed
+    {
+        if (empty($mailData['leadId'])) {
+            return null;
+        }
+
+        $lead = $this->entityManager->getRepository(Lead::class)->find((int) $mailData['leadId']);
+
+        if (!$lead instanceof Lead) {
+            return null;
+        }
+
+        return $lead->getFieldValue($field);
     }
 
     private function getNestedContactFieldValue(string $field, array $data): mixed
