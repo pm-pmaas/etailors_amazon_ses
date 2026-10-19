@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
+## [1.0.43] - 2026-10-19
+### Fixed
+- Fixed contactfield tokens in email `From address` and `From name` for SES sends by resolving tokenized values per recipient before building the Symfony address.
+- Kept existing fixed `From` behaviour unchanged and fall back to an already valid sender when a contactfield token is empty or unresolved.
+
 ## [1.0.42] - 2026-10-12
 ### Fixed
 - Fixed `CallbackSubscriber` construction for both legacy translator/logger and authenticator-first generated service container argument orders, preventing SNS callbacks from failing with a `TypeError` before subscription confirmation can be processed.

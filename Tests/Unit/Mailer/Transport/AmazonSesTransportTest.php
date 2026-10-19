@@ -4,11 +4,14 @@ declare(strict_types=1);
 
 namespace MauticPlugin\AmazonSesBundle\Tests\Unit\Mailer\Transport;
 
+use Mautic\EmailBundle\Entity\Email as MauticEmail;
 use Mautic\EmailBundle\Mailer\Message\MauticMessage;
 use MauticPlugin\AmazonSesBundle\Mailer\Transport\AmazonSesTransport;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\NullLogger;
+use Symfony\Component\Mailer\Envelope;
 use Symfony\Component\Mailer\Exception\TransportException;
+use Symfony\Component\Mime\Address;
 
 class AmazonSesTransportTest extends TestCase
 {
@@ -50,5 +53,79 @@ class AmazonSesTransportTest extends TestCase
         $this->expectExceptionMessage('Unable to open SES rate limit token bucket file');
 
         $method->invoke($transport, __DIR__, 1, 1);
+    }
+
+    public function testSetFromResolvesContactFieldTokens(): void
+    {
+        $transport = $this->createTransportWithEnvelope();
+        $emailEntity = (new MauticEmail())
+            ->setFromAddress('{contactfield=sender}')
+            ->setFromName('{contactfield=sender_name}');
+        $message = (new MauticMessage())
+            ->from(new Address('default@example.com', 'Default Sender'));
+
+        $this->invokeSetFrom($transport, $message, $emailEntity, [
+            'tokens' => [
+                '{contactfield=sender}' => 'contact-sender@example.com',
+                '{contactfield=sender_name}' => 'Contact Sender',
+            ],
+        ]);
+
+        $from = $message->getFrom()[0];
+        $this->assertSame('contact-sender@example.com', $from->getAddress());
+        $this->assertSame('Contact Sender', $from->getName());
+    }
+
+    public function testSetFromKeepsFixedFromValues(): void
+    {
+        $transport = $this->createTransportWithEnvelope();
+        $emailEntity = (new MauticEmail())
+            ->setFromAddress('fixed@example.com')
+            ->setFromName('Fixed Sender');
+        $message = (new MauticMessage())
+            ->from(new Address('default@example.com', 'Default Sender'));
+
+        $this->invokeSetFrom($transport, $message, $emailEntity);
+
+        $from = $message->getFrom()[0];
+        $this->assertSame('fixed@example.com', $from->getAddress());
+        $this->assertSame('Fixed Sender', $from->getName());
+    }
+
+    public function testSetFromFallsBackWhenContactFieldTokenIsMissing(): void
+    {
+        $transport = $this->createTransportWithEnvelope();
+        $emailEntity = (new MauticEmail())
+            ->setFromAddress('{contactfield=sender}')
+            ->setFromName('{contactfield=sender_name}');
+        $message = (new MauticMessage())
+            ->from(new Address('default@example.com', 'Default Sender'));
+
+        $this->invokeSetFrom($transport, $message, $emailEntity, ['tokens' => []]);
+
+        $from = $message->getFrom()[0];
+        $this->assertSame('default@example.com', $from->getAddress());
+        $this->assertSame('Default Sender', $from->getName());
+    }
+
+    private function createTransportWithEnvelope(): AmazonSesTransport
+    {
+        $reflection = new \ReflectionClass(AmazonSesTransport::class);
+        $transport = $reflection->newInstanceWithoutConstructor();
+        $envelopeProperty = $reflection->getProperty('envelope');
+        $envelopeProperty->setAccessible(true);
+        $envelopeProperty->setValue($transport, new Envelope(
+            new Address('fallback@example.com', 'Fallback Sender'),
+            [new Address('recipient@example.com')]
+        ));
+
+        return $transport;
+    }
+
+    private function invokeSetFrom(AmazonSesTransport $transport, MauticMessage $message, MauticEmail $emailEntity, array $mailData = []): void
+    {
+        $method = new \ReflectionMethod(AmazonSesTransport::class, 'setFrom');
+        $method->setAccessible(true);
+        $method->invoke($transport, $message, $emailEntity, $mailData);
     }
 }

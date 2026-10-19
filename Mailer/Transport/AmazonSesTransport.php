@@ -315,7 +315,7 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
                 MailHelper::searchReplaceTokens($mauticTokens, $sortedTokens, $sentMessage);
 
                 // Update From Address dynamically
-                $this->updateEmailFields($sentMessage);
+                $this->updateEmailFields($sentMessage, $mailData);
                 $this->addSesHeaders($payload, $sentMessage, $mailData);
                 $payload['Destination'] = [
                     'ToAddresses'  => $this->stringifyAddresses($sentMessage->getTo()),
@@ -544,14 +544,18 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
      * @return void
      * @throws \Exception
      */
-    private function updateEmailFields(MauticMessage $email): void
+    private function updateEmailFields(MauticMessage $email, array $mailData = []): void
     {
         $emailId = $this->getEmailIdFromMetadata($email->getMetadata());
+        if ($emailId === null && isset($mailData['emailId'])) {
+            $emailId = (int) $mailData['emailId'];
+        }
+
         if ($emailId !== null) {
             $emailEntity = $this->entityManager->getRepository(MauticEmailEntity::class)->find($emailId);
             if ($emailEntity) {
                 // Update From Address and Name
-                $email = $this->setFrom($email, $emailEntity);
+                $email = $this->setFrom($email, $emailEntity, $mailData);
 
                 // Add Custom Headers, checking for duplicates
                 $customHeaders = $emailEntity->getHeaders();
@@ -567,22 +571,69 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
         }
     }
 
-    private function setFrom(MauticMessage $email, \Mautic\EmailBundle\Entity\Email $emailEntity): MauticMessage
+    private function setFrom(MauticMessage $email, \Mautic\EmailBundle\Entity\Email $emailEntity, array $mailData = []): MauticMessage
     {
-        $entityEmailFrom = $this->envelope->getSender()->getAddress();
-        $entityNameFrom = $this->envelope->getSender()->getName();
+        $defaultFrom = $this->envelope->getSender();
+        $fallbackFrom = $this->getFallbackFrom($email);
+        $entityEmailFrom = $defaultFrom->getAddress();
+        $entityNameFrom = $defaultFrom->getName();
+        $tokens = $mailData['tokens'] ?? [];
+        $isFromAddressTokenized = false;
+
         if (!empty($emailEntity->getFromAddress())) {
-            $entityEmailFrom = $emailEntity->getFromAddress();
+            $fromAddress = (string) $emailEntity->getFromAddress();
+            $isFromAddressTokenized = $this->isContactFieldTokenized($fromAddress);
+            $entityEmailFrom = $this->resolveContactFieldTokens($fromAddress, $tokens);
+            if ($this->isContactFieldTokenized($entityEmailFrom)) {
+                $entityEmailFrom = $fallbackFrom->getAddress();
+            }
         }
 
         if (!empty($emailEntity->getFromName())) {
-            $entityNameFrom = $emailEntity->getFromName();
+            $entityNameFrom = $this->resolveContactFieldTokens((string) $emailEntity->getFromName(), $tokens);
+            if ($this->isContactFieldTokenized($entityNameFrom)) {
+                $entityNameFrom = $fallbackFrom->getName();
+            }
         }
 
-        $email->from(new Address($entityEmailFrom, $entityNameFrom));
+        try {
+            $email->from(new Address($entityEmailFrom, $entityNameFrom));
+        } catch (\Exception $exception) {
+            if (!$isFromAddressTokenized) {
+                throw $exception;
+            }
+
+            $email->from(new Address($fallbackFrom->getAddress(), $fallbackFrom->getName()));
+        }
 
         return $email;
 
+    }
+
+    private function getFallbackFrom(MauticMessage $email): Address
+    {
+        $from = $email->getFrom();
+        if (!empty($from) && !$this->isContactFieldTokenized($from[0]->getAddress())) {
+            return $from[0];
+        }
+
+        return $this->envelope->getSender();
+    }
+
+    private function resolveContactFieldTokens(string $value, array $tokens): string
+    {
+        if (!$this->isContactFieldTokenized($value)) {
+            return $value;
+        }
+
+        return preg_replace_callback('/{contactfield=(.*?)}/', function (array $matches) use ($tokens): string {
+            return !empty($tokens[$matches[0]]) ? (string) $tokens[$matches[0]] : $matches[0];
+        }, $value) ?? $value;
+    }
+
+    private function isContactFieldTokenized(string $value): bool
+    {
+        return (bool) preg_match('/{contactfield=(.*?)}/', $value);
     }
 
     private function setReplyTo(MauticMessage $sentMessage): array
