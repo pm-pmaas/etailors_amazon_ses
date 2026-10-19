@@ -609,7 +609,12 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
 
     private function getFallbackFrom(MauticMessage $email): Address
     {
-        $from = $email->getFrom();
+        try {
+            $from = $email->getFrom();
+        } catch (\Exception) {
+            return $this->envelope->getSender();
+        }
+
         if (!empty($from) && !$this->isContactFieldTokenized($from[0]->getAddress())) {
             return $from[0];
         }

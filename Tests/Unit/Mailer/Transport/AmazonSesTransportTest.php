@@ -108,6 +108,34 @@ class AmazonSesTransportTest extends TestCase
         $this->assertSame('Default Sender', $from->getName());
     }
 
+    public function testSetFromFallsBackToEnvelopeWhenMessageHasNoValidFrom(): void
+    {
+        $transport = $this->createTransportWithEnvelope();
+        $emailEntity = (new MauticEmail())
+            ->setFromAddress('{contactfield=sender}')
+            ->setFromName('{contactfield=sender_name}');
+        $message = new class extends MauticMessage {
+            private bool $throwOnGetFrom = true;
+
+            public function getFrom(): array
+            {
+                if ($this->throwOnGetFrom) {
+                    $this->throwOnGetFrom = false;
+
+                    throw new \RuntimeException('Invalid From header');
+                }
+
+                return parent::getFrom();
+            }
+        };
+
+        $this->invokeSetFrom($transport, $message, $emailEntity, ['tokens' => []]);
+
+        $from = $message->getFrom()[0];
+        $this->assertSame('fallback@example.com', $from->getAddress());
+        $this->assertSame('Fallback Sender', $from->getName());
+    }
+
     public function testUpdateEmailFieldsResolvesContactFieldTokensFromMailData(): void
     {
         $emailEntity = (new MauticEmail())
