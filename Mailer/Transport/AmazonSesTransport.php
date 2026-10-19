@@ -153,9 +153,6 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
             $this->message = $email;
             $this->envelope = $message->getEnvelope();
 
-            // Use centralized method for updating From address
-            $this->updateEmailFields($email);
-
             $failures = [];
 
             // Handle attachment or non-template emails

@@ -108,6 +108,28 @@ class AmazonSesTransportTest extends TestCase
         $this->assertSame('Default Sender', $from->getName());
     }
 
+    public function testUpdateEmailFieldsResolvesContactFieldTokensFromMailData(): void
+    {
+        $emailEntity = (new MauticEmail())
+            ->setFromAddress('{contactfield=sender}')
+            ->setFromName('{contactfield=sender_name}');
+        $transport = $this->createTransportWithEnvelopeAndEmailEntity($emailEntity);
+        $message = (new MauticMessage())
+            ->from(new Address('default@example.com', 'Default Sender'));
+
+        $this->invokeUpdateEmailFields($transport, $message, [
+            'emailId' => 123,
+            'tokens' => [
+                '{contactfield=sender}' => 'contact-sender@example.com',
+                '{contactfield=sender_name}' => 'Contact Sender',
+            ],
+        ]);
+
+        $from = $message->getFrom()[0];
+        $this->assertSame('contact-sender@example.com', $from->getAddress());
+        $this->assertSame('Contact Sender', $from->getName());
+    }
+
     private function createTransportWithEnvelope(): AmazonSesTransport
     {
         $reflection = new \ReflectionClass(AmazonSesTransport::class);
@@ -122,10 +144,47 @@ class AmazonSesTransportTest extends TestCase
         return $transport;
     }
 
+    private function createTransportWithEnvelopeAndEmailEntity(MauticEmail $emailEntity): AmazonSesTransport
+    {
+        $transport = $this->createTransportWithEnvelope();
+        $entityManager = new class($emailEntity) {
+            public function __construct(private MauticEmail $emailEntity)
+            {
+            }
+
+            public function getRepository(string $className): object
+            {
+                return new class($this->emailEntity) {
+                    public function __construct(private MauticEmail $emailEntity)
+                    {
+                    }
+
+                    public function find(int $id): MauticEmail
+                    {
+                        return $this->emailEntity;
+                    }
+                };
+            }
+        };
+        $reflection = new \ReflectionClass(AmazonSesTransport::class);
+        $entityManagerProperty = $reflection->getProperty('entityManager');
+        $entityManagerProperty->setAccessible(true);
+        $entityManagerProperty->setValue($transport, $entityManager);
+
+        return $transport;
+    }
+
     private function invokeSetFrom(AmazonSesTransport $transport, MauticMessage $message, MauticEmail $emailEntity, array $mailData = []): void
     {
         $method = new \ReflectionMethod(AmazonSesTransport::class, 'setFrom');
         $method->setAccessible(true);
         $method->invoke($transport, $message, $emailEntity, $mailData);
+    }
+
+    private function invokeUpdateEmailFields(AmazonSesTransport $transport, MauticMessage $message, array $mailData = []): void
+    {
+        $method = new \ReflectionMethod(AmazonSesTransport::class, 'updateEmailFields');
+        $method->setAccessible(true);
+        $method->invoke($transport, $message, $mailData);
     }
 }
