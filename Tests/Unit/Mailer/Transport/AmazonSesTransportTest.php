@@ -158,6 +158,29 @@ class AmazonSesTransportTest extends TestCase
         $this->assertSame('Contact Sender', $from->getName());
     }
 
+    public function testUpdateEmailFieldsResolvesContactFieldTokensFromContactMetadata(): void
+    {
+        $emailEntity = (new MauticEmail())
+            ->setFromAddress('{contactfield=sender}')
+            ->setFromName('{contactfield=sender_name}');
+        $transport = $this->createTransportWithEnvelopeAndEmailEntity($emailEntity);
+        $message = (new MauticMessage())
+            ->from(new Address('default@example.com', 'Default Sender'));
+
+        $this->invokeUpdateEmailFields($transport, $message, [
+            'emailId' => 123,
+            'tokens' => [],
+            'lead' => [
+                'sender' => 'metadata-sender@example.com',
+                'sender_name' => 'Metadata Sender',
+            ],
+        ]);
+
+        $from = $message->getFrom()[0];
+        $this->assertSame('metadata-sender@example.com', $from->getAddress());
+        $this->assertSame('Metadata Sender', $from->getName());
+    }
+
     private function createTransportWithEnvelope(): AmazonSesTransport
     {
         $reflection = new \ReflectionClass(AmazonSesTransport::class);

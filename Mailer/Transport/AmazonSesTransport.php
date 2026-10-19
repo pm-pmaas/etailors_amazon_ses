@@ -574,20 +574,19 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
         $fallbackFrom = $this->getFallbackFrom($email);
         $entityEmailFrom = $defaultFrom->getAddress();
         $entityNameFrom = $defaultFrom->getName();
-        $tokens = $mailData['tokens'] ?? [];
         $isFromAddressTokenized = false;
 
         if (!empty($emailEntity->getFromAddress())) {
             $fromAddress = (string) $emailEntity->getFromAddress();
             $isFromAddressTokenized = $this->isContactFieldTokenized($fromAddress);
-            $entityEmailFrom = $this->resolveContactFieldTokens($fromAddress, $tokens);
+            $entityEmailFrom = $this->resolveContactFieldTokens($fromAddress, $mailData);
             if ($this->isContactFieldTokenized($entityEmailFrom)) {
                 $entityEmailFrom = $fallbackFrom->getAddress();
             }
         }
 
         if (!empty($emailEntity->getFromName())) {
-            $entityNameFrom = $this->resolveContactFieldTokens((string) $emailEntity->getFromName(), $tokens);
+            $entityNameFrom = $this->resolveContactFieldTokens((string) $emailEntity->getFromName(), $mailData);
             if ($this->isContactFieldTokenized($entityNameFrom)) {
                 $entityNameFrom = $fallbackFrom->getName();
             }
@@ -622,15 +621,72 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
         return $this->envelope->getSender();
     }
 
-    private function resolveContactFieldTokens(string $value, array $tokens): string
+    private function resolveContactFieldTokens(string $value, array $mailData): string
     {
         if (!$this->isContactFieldTokenized($value)) {
             return $value;
         }
 
-        return preg_replace_callback('/{contactfield=(.*?)}/', function (array $matches) use ($tokens): string {
-            return !empty($tokens[$matches[0]]) ? (string) $tokens[$matches[0]] : $matches[0];
+        $tokens = $mailData['tokens'] ?? [];
+
+        return preg_replace_callback('/{contactfield=(.*?)}/', function (array $matches) use ($tokens, $mailData): string {
+            if (!empty($tokens[$matches[0]])) {
+                return (string) $tokens[$matches[0]];
+            }
+
+            $contactValue = $this->getContactFieldValue($matches[1], $mailData);
+
+            return $contactValue !== null && $contactValue !== '' ? (string) $contactValue : $matches[0];
         }, $value) ?? $value;
+    }
+
+    private function getContactFieldValue(string $field, array $mailData): mixed
+    {
+        foreach (['lead', 'contact', 'contactFields', 'fields', 'leadFields', 'data'] as $key) {
+            if (isset($mailData[$key]) && is_array($mailData[$key])) {
+                $value = $this->getNestedContactFieldValue($field, $mailData[$key]);
+                if ($value !== null) {
+                    return $value;
+                }
+            }
+        }
+
+        if (array_key_exists($field, $mailData) && !is_array($mailData[$field]) && !is_object($mailData[$field])) {
+            return $mailData[$field];
+        }
+
+        foreach ($mailData as $key => $value) {
+            if ($key === 'tokens' || !is_array($value)) {
+                continue;
+            }
+
+            $nestedValue = $this->getNestedContactFieldValue($field, $value);
+            if ($nestedValue !== null) {
+                return $nestedValue;
+            }
+        }
+
+        return null;
+    }
+
+    private function getNestedContactFieldValue(string $field, array $data): mixed
+    {
+        if (array_key_exists($field, $data) && !is_array($data[$field]) && !is_object($data[$field])) {
+            return $data[$field];
+        }
+
+        foreach ($data as $value) {
+            if (!is_array($value)) {
+                continue;
+            }
+
+            $nestedValue = $this->getNestedContactFieldValue($field, $value);
+            if ($nestedValue !== null) {
+                return $nestedValue;
+            }
+        }
+
+        return null;
     }
 
     private function isContactFieldTokenized(string $value): bool
