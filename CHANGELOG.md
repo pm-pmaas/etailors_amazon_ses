@@ -8,6 +8,7 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 ### Fixed
 - Fixed contactfield tokens in email `From address` and `From name` for SES sends by resolving tokenized values per recipient before building the Symfony address.
 - Prevented Mautic's segment email batch preparation from failing on a raw tokenized `From address` before the SES transport can resolve it per recipient.
+- Improved segment email token resolution by reading contactfield values from the contact row when queued metadata does not contain hydrated custom fields, and keep the `Sender` header in sync with a resolved tokenized `From`.
 - Kept existing fixed `From` behaviour unchanged and fall back to an already valid sender when a contactfield token is empty or unresolved.
 
 ## [1.0.42] - 2026-10-12

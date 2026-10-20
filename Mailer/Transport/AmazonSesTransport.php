@@ -576,6 +576,7 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
         $entityEmailFrom = $defaultFrom->getAddress();
         $entityNameFrom = $defaultFrom->getName();
         $isFromAddressTokenized = false;
+        $isFromNameTokenized = false;
 
         if (!empty($emailEntity->getFromAddress())) {
             $fromAddress = (string) $emailEntity->getFromAddress();
@@ -587,20 +588,28 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
         }
 
         if (!empty($emailEntity->getFromName())) {
-            $entityNameFrom = $this->resolveContactFieldTokens((string) $emailEntity->getFromName(), $mailData);
+            $fromName = (string) $emailEntity->getFromName();
+            $isFromNameTokenized = $this->isContactFieldTokenized($fromName);
+            $entityNameFrom = $this->resolveContactFieldTokens($fromName, $mailData);
             if ($this->isContactFieldTokenized($entityNameFrom)) {
                 $entityNameFrom = $fallbackFrom->getName();
             }
         }
 
         try {
-            $email->from(new Address($entityEmailFrom, $entityNameFrom));
+            $from = new Address($entityEmailFrom, $entityNameFrom);
+            $email->from($from);
+            if ($isFromAddressTokenized || $isFromNameTokenized) {
+                $email->sender($from);
+            }
         } catch (\Exception $exception) {
             if (!$isFromAddressTokenized) {
                 throw $exception;
             }
 
-            $email->from(new Address($fallbackFrom->getAddress(), $fallbackFrom->getName()));
+            $from = new Address($fallbackFrom->getAddress(), $fallbackFrom->getName());
+            $email->from($from);
+            $email->sender($from);
         }
 
         return $email;
@@ -676,13 +685,42 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
             return null;
         }
 
+        $leadId = (int) $mailData['leadId'];
         $lead = $this->entityManager->getRepository(Lead::class)->find((int) $mailData['leadId']);
 
-        if (!$lead instanceof Lead) {
+        if ($lead instanceof Lead) {
+            $value = $lead->getFieldValue($field);
+            if ($value !== null && $value !== '') {
+                return $value;
+            }
+        }
+
+        return $this->getLeadFieldValueFromDatabase($field, $leadId);
+    }
+
+    private function getLeadFieldValueFromDatabase(string $field, int $leadId): mixed
+    {
+        if (!preg_match('/^[A-Za-z0-9_]+$/', $field)) {
             return null;
         }
 
-        return $lead->getFieldValue($field);
+        try {
+            $connection = $this->entityManager->getConnection();
+            $table = $this->entityManager->getClassMetadata(Lead::class)->getTableName();
+
+            $value = $connection->fetchOne(
+                sprintf(
+                    'SELECT %s FROM %s WHERE id = :leadId',
+                    $connection->quoteIdentifier($field),
+                    $connection->quoteIdentifier($table)
+                ),
+                ['leadId' => $leadId]
+            );
+        } catch (\Throwable) {
+            return null;
+        }
+
+        return false !== $value ? $value : null;
     }
 
     private function getNestedContactFieldValue(string $field, array $data): mixed

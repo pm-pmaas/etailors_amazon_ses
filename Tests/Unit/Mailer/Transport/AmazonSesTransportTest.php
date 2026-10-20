@@ -75,6 +75,8 @@ class AmazonSesTransportTest extends TestCase
         $from = $message->getFrom()[0];
         $this->assertSame('contact-sender@example.com', $from->getAddress());
         $this->assertSame('Contact Sender', $from->getName());
+        $this->assertSame('contact-sender@example.com', $message->getSender()?->getAddress());
+        $this->assertSame('Contact Sender', $message->getSender()?->getName());
     }
 
     public function testSetFromKeepsFixedFromValues(): void
@@ -91,6 +93,7 @@ class AmazonSesTransportTest extends TestCase
         $from = $message->getFrom()[0];
         $this->assertSame('fixed@example.com', $from->getAddress());
         $this->assertSame('Fixed Sender', $from->getName());
+        $this->assertNull($message->getSender());
     }
 
     public function testSetFromFallsBackWhenContactFieldTokenIsMissing(): void
@@ -215,6 +218,32 @@ class AmazonSesTransportTest extends TestCase
         $this->assertSame('Lead Sender', $from->getName());
     }
 
+    public function testUpdateEmailFieldsResolvesContactFieldTokensFromLeadDatabaseFields(): void
+    {
+        $emailEntity = (new MauticEmail())
+            ->setFromAddress('{contactfield=sender}')
+            ->setFromName('{contactfield=sender_name}');
+        $transport = $this->createTransportWithEnvelopeAndEmailEntity($emailEntity, new Lead(), [
+            'sender'      => 'database-sender@example.com',
+            'sender_name' => 'Database Sender',
+        ]);
+        $message = (new MauticMessage())
+            ->from(new Address('default@example.com', 'Default Sender'))
+            ->sender(new Address('default@example.com', 'Default Sender'));
+
+        $this->invokeUpdateEmailFields($transport, $message, [
+            'emailId' => 123,
+            'leadId'  => 456,
+            'tokens'  => [],
+        ]);
+
+        $from = $message->getFrom()[0];
+        $this->assertSame('database-sender@example.com', $from->getAddress());
+        $this->assertSame('Database Sender', $from->getName());
+        $this->assertSame('database-sender@example.com', $message->getSender()?->getAddress());
+        $this->assertSame('Database Sender', $message->getSender()?->getName());
+    }
+
     private function createTransportWithEnvelope(): AmazonSesTransport
     {
         $reflection = new \ReflectionClass(AmazonSesTransport::class);
@@ -229,11 +258,11 @@ class AmazonSesTransportTest extends TestCase
         return $transport;
     }
 
-    private function createTransportWithEnvelopeAndEmailEntity(MauticEmail $emailEntity, ?Lead $lead = null): AmazonSesTransport
+    private function createTransportWithEnvelopeAndEmailEntity(MauticEmail $emailEntity, ?Lead $lead = null, array $leadFieldValues = []): AmazonSesTransport
     {
         $transport = $this->createTransportWithEnvelope();
-        $entityManager = new class($emailEntity, $lead) {
-            public function __construct(private MauticEmail $emailEntity, private ?Lead $lead)
+        $entityManager = new class($emailEntity, $lead, $leadFieldValues) {
+            public function __construct(private MauticEmail $emailEntity, private ?Lead $lead, private array $leadFieldValues)
             {
             }
 
@@ -251,6 +280,37 @@ class AmazonSesTransportTest extends TestCase
                         }
 
                         return $this->emailEntity;
+                    }
+                };
+            }
+
+            public function getConnection(): object
+            {
+                return new class($this->leadFieldValues) {
+                    public function __construct(private array $leadFieldValues)
+                    {
+                    }
+
+                    public function quoteIdentifier(string $identifier): string
+                    {
+                        return '`'.$identifier.'`';
+                    }
+
+                    public function fetchOne(string $query, array $params): mixed
+                    {
+                        preg_match('/SELECT `([^`]+)` FROM/', $query, $matches);
+
+                        return $this->leadFieldValues[$matches[1] ?? ''] ?? false;
+                    }
+                };
+            }
+
+            public function getClassMetadata(string $className): object
+            {
+                return new class {
+                    public function getTableName(): string
+                    {
+                        return 'leads';
                     }
                 };
             }
