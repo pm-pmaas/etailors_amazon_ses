@@ -30,6 +30,7 @@ use Symfony\Component\Mailer\Transport\AbstractTransport;
 use Symfony\Component\Mime\Address;
 use Symfony\Component\Mime\Email;
 use Mautic\EmailBundle\Entity\Email as MauticEmailEntity;
+use Mautic\LeadBundle\Entity\Lead;
 use Doctrine\ORM\EntityManagerInterface;
 use Mautic\CoreBundle\Helper\PathsHelper;
 use Symfony\Component\Mailer\Envelope;
@@ -152,9 +153,6 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
 
             $this->message = $email;
             $this->envelope = $message->getEnvelope();
-
-            // Use centralized method for updating From address
-            $this->updateEmailFields($email);
 
             $failures = [];
 
@@ -315,7 +313,7 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
                 MailHelper::searchReplaceTokens($mauticTokens, $sortedTokens, $sentMessage);
 
                 // Update From Address dynamically
-                $this->updateEmailFields($sentMessage);
+                $this->updateEmailFields($sentMessage, $mailData);
                 $this->addSesHeaders($payload, $sentMessage, $mailData);
                 $payload['Destination'] = [
                     'ToAddresses'  => $this->stringifyAddresses($sentMessage->getTo()),
@@ -544,14 +542,18 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
      * @return void
      * @throws \Exception
      */
-    private function updateEmailFields(MauticMessage $email): void
+    private function updateEmailFields(MauticMessage $email, array $mailData = []): void
     {
         $emailId = $this->getEmailIdFromMetadata($email->getMetadata());
+        if ($emailId === null && isset($mailData['emailId'])) {
+            $emailId = (int) $mailData['emailId'];
+        }
+
         if ($emailId !== null) {
             $emailEntity = $this->entityManager->getRepository(MauticEmailEntity::class)->find($emailId);
             if ($emailEntity) {
                 // Update From Address and Name
-                $email = $this->setFrom($email, $emailEntity);
+                $email = $this->setFrom($email, $emailEntity, $mailData);
 
                 // Add Custom Headers, checking for duplicates
                 $customHeaders = $emailEntity->getHeaders();
@@ -567,22 +569,183 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
         }
     }
 
-    private function setFrom(MauticMessage $email, \Mautic\EmailBundle\Entity\Email $emailEntity): MauticMessage
+    private function setFrom(MauticMessage $email, \Mautic\EmailBundle\Entity\Email $emailEntity, array $mailData = []): MauticMessage
     {
-        $entityEmailFrom = $this->envelope->getSender()->getAddress();
-        $entityNameFrom = $this->envelope->getSender()->getName();
+        $defaultFrom = $this->envelope->getSender();
+        $fallbackFrom = $this->getFallbackFrom($email);
+        $entityEmailFrom = $defaultFrom->getAddress();
+        $entityNameFrom = $defaultFrom->getName();
+        $isFromAddressTokenized = false;
+        $isFromNameTokenized = false;
+
         if (!empty($emailEntity->getFromAddress())) {
-            $entityEmailFrom = $emailEntity->getFromAddress();
+            $fromAddress = (string) $emailEntity->getFromAddress();
+            $isFromAddressTokenized = $this->isContactFieldTokenized($fromAddress);
+            $entityEmailFrom = $this->resolveContactFieldTokens($fromAddress, $mailData);
+            if ($this->isContactFieldTokenized($entityEmailFrom)) {
+                $entityEmailFrom = $fallbackFrom->getAddress();
+            }
         }
 
         if (!empty($emailEntity->getFromName())) {
-            $entityNameFrom = $emailEntity->getFromName();
+            $fromName = (string) $emailEntity->getFromName();
+            $isFromNameTokenized = $this->isContactFieldTokenized($fromName);
+            $entityNameFrom = $this->resolveContactFieldTokens($fromName, $mailData);
+            if ($this->isContactFieldTokenized($entityNameFrom)) {
+                $entityNameFrom = $fallbackFrom->getName();
+            }
         }
 
-        $email->from(new Address($entityEmailFrom, $entityNameFrom));
+        try {
+            $from = new Address($entityEmailFrom, $entityNameFrom);
+            $email->from($from);
+            if ($isFromAddressTokenized || $isFromNameTokenized) {
+                $email->sender($from);
+            }
+        } catch (\Exception $exception) {
+            if (!$isFromAddressTokenized) {
+                throw $exception;
+            }
+
+            $from = new Address($fallbackFrom->getAddress(), $fallbackFrom->getName());
+            $email->from($from);
+            $email->sender($from);
+        }
 
         return $email;
 
+    }
+
+    private function getFallbackFrom(MauticMessage $email): Address
+    {
+        try {
+            $from = $email->getFrom();
+        } catch (\Exception) {
+            return $this->envelope->getSender();
+        }
+
+        if (!empty($from) && !$this->isContactFieldTokenized($from[0]->getAddress())) {
+            return $from[0];
+        }
+
+        return $this->envelope->getSender();
+    }
+
+    private function resolveContactFieldTokens(string $value, array $mailData): string
+    {
+        if (!$this->isContactFieldTokenized($value)) {
+            return $value;
+        }
+
+        $tokens = $mailData['tokens'] ?? [];
+
+        return preg_replace_callback('/{contactfield=(.*?)}/', function (array $matches) use ($tokens, $mailData): string {
+            if (!empty($tokens[$matches[0]])) {
+                return (string) $tokens[$matches[0]];
+            }
+
+            $contactValue = $this->getContactFieldValue($matches[1], $mailData);
+
+            return $contactValue !== null && $contactValue !== '' ? (string) $contactValue : $matches[0];
+        }, $value) ?? $value;
+    }
+
+    private function getContactFieldValue(string $field, array $mailData): mixed
+    {
+        foreach (['lead', 'contact', 'contactFields', 'fields', 'leadFields', 'data'] as $key) {
+            if (isset($mailData[$key]) && is_array($mailData[$key])) {
+                $value = $this->getNestedContactFieldValue($field, $mailData[$key]);
+                if ($value !== null) {
+                    return $value;
+                }
+            }
+        }
+
+        if (array_key_exists($field, $mailData) && !is_array($mailData[$field]) && !is_object($mailData[$field])) {
+            return $mailData[$field];
+        }
+
+        foreach ($mailData as $key => $value) {
+            if ($key === 'tokens' || !is_array($value)) {
+                continue;
+            }
+
+            $nestedValue = $this->getNestedContactFieldValue($field, $value);
+            if ($nestedValue !== null) {
+                return $nestedValue;
+            }
+        }
+
+        return $this->getLeadFieldValue($field, $mailData);
+    }
+
+    private function getLeadFieldValue(string $field, array $mailData): mixed
+    {
+        if (empty($mailData['leadId'])) {
+            return null;
+        }
+
+        $leadId = (int) $mailData['leadId'];
+        $lead = $this->entityManager->getRepository(Lead::class)->find((int) $mailData['leadId']);
+
+        if ($lead instanceof Lead) {
+            $value = $lead->getFieldValue($field);
+            if ($value !== null && $value !== '') {
+                return $value;
+            }
+        }
+
+        return $this->getLeadFieldValueFromDatabase($field, $leadId);
+    }
+
+    private function getLeadFieldValueFromDatabase(string $field, int $leadId): mixed
+    {
+        if (!preg_match('/^[A-Za-z0-9_]+$/', $field)) {
+            return null;
+        }
+
+        try {
+            $connection = $this->entityManager->getConnection();
+            $table = $this->entityManager->getClassMetadata(Lead::class)->getTableName();
+
+            $value = $connection->fetchOne(
+                sprintf(
+                    'SELECT %s FROM %s WHERE id = :leadId',
+                    $connection->quoteIdentifier($field),
+                    $connection->quoteIdentifier($table)
+                ),
+                ['leadId' => $leadId]
+            );
+        } catch (\Throwable) {
+            return null;
+        }
+
+        return false !== $value ? $value : null;
+    }
+
+    private function getNestedContactFieldValue(string $field, array $data): mixed
+    {
+        if (array_key_exists($field, $data) && !is_array($data[$field]) && !is_object($data[$field])) {
+            return $data[$field];
+        }
+
+        foreach ($data as $value) {
+            if (!is_array($value)) {
+                continue;
+            }
+
+            $nestedValue = $this->getNestedContactFieldValue($field, $value);
+            if ($nestedValue !== null) {
+                return $nestedValue;
+            }
+        }
+
+        return null;
+    }
+
+    private function isContactFieldTokenized(string $value): bool
+    {
+        return (bool) preg_match('/{contactfield=(.*?)}/', $value);
     }
 
     private function setReplyTo(MauticMessage $sentMessage): array
