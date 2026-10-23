@@ -24,7 +24,7 @@ class AmazonSesTransportFactoryTest extends TestCase
         $this->assertSame($expected, $result);
     }
 
-    public function providePasswords(): array
+    public static function providePasswords(): array
     {
         return [
             'html tags removed' => ['<b>password</b>', 'password'],
