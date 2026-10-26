@@ -9,6 +9,13 @@ use PHPUnit\Framework\TestCase;
 
 class AmazonSesTransportFactoryTest extends TestCase
 {
+    public function testTransportCreationCanBeExtended(): void
+    {
+        $method = new \ReflectionMethod(AmazonSesTransportFactory::class, 'createTransport');
+
+        $this->assertTrue($method->isProtected());
+    }
+
     /**
      * @dataProvider providePasswords
      */
