@@ -81,17 +81,28 @@ class AmazonSesTransportFactory extends AbstractTransportFactory
             $effectiveRate = (int)($manualRate ?? $cachedRate ?? $fetchedRate ?? self::DEFAULT_RATE);
             $batchMultiplier = (int)($dsn->getOption('batchmultiplier') ?? 10);
 
-            return new AmazonSesTransport(
-                $client,
-                $this->entityManager,
-                $this->pathsHelper,
-                $this->dispatcher,
-                $this->logger,
-                ['maxSendRate' => $effectiveRate, 'batchMultiplier' => $batchMultiplier]
-            );
+            return $this->createTransport($client, $effectiveRate, $batchMultiplier);
         }
 
         throw new UnsupportedSchemeException($dsn, 'Amazon SES', $this->getSupportedSchemes());
+    }
+
+    /**
+     * Creates the transport after the SES client and send-rate settings have been resolved.
+     */
+    protected function createTransport(
+        SesV2Client $client,
+        int $effectiveRate,
+        int $batchMultiplier
+    ): TransportInterface {
+        return new AmazonSesTransport(
+            $client,
+            $this->entityManager,
+            $this->pathsHelper,
+            $this->dispatcher,
+            $this->logger,
+            ['maxSendRate' => $effectiveRate, 'batchMultiplier' => $batchMultiplier]
+        );
     }
 
     /**
