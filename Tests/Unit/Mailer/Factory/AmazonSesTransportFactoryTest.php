@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace MauticPlugin\AmazonSesBundle\Tests\Unit\Mailer\Factory;
 
 use MauticPlugin\AmazonSesBundle\Mailer\Factory\AmazonSesTransportFactory;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 class AmazonSesTransportFactoryTest extends TestCase
@@ -12,6 +13,7 @@ class AmazonSesTransportFactoryTest extends TestCase
     /**
      * @dataProvider providePasswords
      */
+    #[DataProvider('providePasswords')]
     public function testSanitizePassword(string $input, string $expected): void
     {
         $reflection = new \ReflectionClass(AmazonSesTransportFactory::class);
