@@ -263,22 +263,6 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
     }
 
     /**
-     * Returns the message currently being converted into SES payloads.
-     */
-    protected function getMessage(): MauticMessage
-    {
-        return $this->message;
-    }
-
-    /**
-     * Returns the envelope for the message currently being sent.
-     */
-    protected function getEnvelope(): Envelope
-    {
-        return $this->envelope;
-    }
-
-    /**
      * Convert MauticMessage to JSON payload that works with RAW sends.
      *
      * @return \Generator<array<string, mixed>>
