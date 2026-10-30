@@ -16,6 +16,14 @@ use Symfony\Component\Mime\Address;
 
 class AmazonSesTransportTest extends TestCase
 {
+    public function testCurrentMessageAndEnvelopeAreAvailableToSubclasses(): void
+    {
+        $reflection = new \ReflectionClass(AmazonSesTransport::class);
+
+        $this->assertTrue($reflection->getMethod('getMessage')->isProtected());
+        $this->assertTrue($reflection->getMethod('getEnvelope')->isProtected());
+    }
+
     public function testAddsMauticEmailIdToSesTags(): void
     {
         $reflection = new \ReflectionClass(AmazonSesTransport::class);
