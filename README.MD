@@ -18,6 +18,7 @@ Feel free to suggest improvements or provide feedback — this is my first Mauti
 - Dynamic **batch size** matching the current SES max send rate.
 - Auto-fetch and cache your SES sending quota.
 - Manual override of rate limit with `ratelimit` DSN option.
+- Configurable AWS SES HTTP timeouts with `connect_timeout` and `timeout` DSN options.
 - Optional retry handling for partial email failures.
 
 ---
@@ -73,12 +74,14 @@ php bin/console mautic:plugins:reload
 3. In the **DSN** field, enter your connection string in the following format:
 
    ```text
-   mautic+ses+api://<AWS_ACCESS_KEY>:<AWS_SECRET_KEY>@default?region=<AWS_REGION>&ratelimit=14&sns_topic_arn=<SNS_TOPIC_ARN>
+   mautic+ses+api://<AWS_ACCESS_KEY>:<AWS_SECRET_KEY>@default?region=<AWS_REGION>&ratelimit=14&connect_timeout=5&timeout=60&sns_topic_arn=<SNS_TOPIC_ARN>
    ```
 
    - Replace `<AWS_ACCESS_KEY>` and `<AWS_SECRET_KEY>` with your AWS credentials.
    - Replace `<AWS_REGION>` with your AWS region (e.g., `us-east-1`).
    - Optionally set `ratelimit` to override the SES max send rate manually.
+   - Optionally set `connect_timeout` to override the maximum time in seconds to connect to AWS SES. Default: `5`.
+   - Optionally set `timeout` to override the maximum total time in seconds for an AWS SES HTTP request. Default: `60`.
    - Set `sns_topic_arn` to the exact SNS topic ARN used for feedback. The callback
      fails closed when no allowed topic is configured. For multiple topics, set
      `amazon_ses_sns_topic_arns` as an array in Mautic's local configuration.
