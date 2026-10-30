@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
+## [1.0.45] - 2026-10-30
+### Added
+- Added protected Amazon SES transport extension points for creating the transport and accessing the current message and envelope.
+- Added PHPUnit 10 data provider attribute support for the Amazon SES transport factory password provider while keeping the PHPUnit 9 data provider annotation.
+
+### Fixed
+- Fixed stalled SES requests from blocking Messenger workers indefinitely by configuring explicit HTTP timeouts on the AWS SES client, with `connect_timeout` and `timeout` DSN options for overrides.
+
+## [1.0.44] - 2026-10-25
+### Fixed
+- Fixed PHPUnit 10 data provider deprecation by making the Amazon SES transport factory password data provider static.
+
 ## [1.0.43] - 2026-10-19
 ### Fixed
 - Fixed contactfield tokens in email `From address` and `From name` for SES sends by resolving tokenized values per recipient before building the Symfony address.

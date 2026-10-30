@@ -24,6 +24,8 @@ use Mautic\CoreBundle\Helper\PathsHelper;
 class AmazonSesTransportFactory extends AbstractTransportFactory
 {
     const DEFAULT_RATE = 14;
+    private const DEFAULT_CONNECT_TIMEOUT = 5.0;
+    private const DEFAULT_TIMEOUT = 60.0;
 
     /** @var array<string, SesV2Client> Keyed by AWS region. */
     private array $amazonClients = [];
@@ -81,17 +83,28 @@ class AmazonSesTransportFactory extends AbstractTransportFactory
             $effectiveRate = (int)($manualRate ?? $cachedRate ?? $fetchedRate ?? self::DEFAULT_RATE);
             $batchMultiplier = (int)($dsn->getOption('batchmultiplier') ?? 10);
 
-            return new AmazonSesTransport(
-                $client,
-                $this->entityManager,
-                $this->pathsHelper,
-                $this->dispatcher,
-                $this->logger,
-                ['maxSendRate' => $effectiveRate, 'batchMultiplier' => $batchMultiplier]
-            );
+            return $this->createTransport($client, $effectiveRate, $batchMultiplier);
         }
 
         throw new UnsupportedSchemeException($dsn, 'Amazon SES', $this->getSupportedSchemes());
+    }
+
+    /**
+     * Creates the transport after the SES client and send-rate settings have been resolved.
+     */
+    protected function createTransport(
+        SesV2Client $client,
+        int $effectiveRate,
+        int $batchMultiplier
+    ): TransportInterface {
+        return new AmazonSesTransport(
+            $client,
+            $this->entityManager,
+            $this->pathsHelper,
+            $this->dispatcher,
+            $this->logger,
+            ['maxSendRate' => $effectiveRate, 'batchMultiplier' => $batchMultiplier]
+        );
     }
 
     /**
@@ -228,12 +241,7 @@ class AmazonSesTransportFactory extends AbstractTransportFactory
         }
 
         if (!isset($this->amazonClients[$dsn_region])) {
-            $config = [
-                'version'     => 'latest',
-                'credentials' => CredentialProvider::fromCredentials(new Credentials($dsn_user, $dsn_password)),
-                'region'      => $dsn_region,
-                'use_aws_shared_config_files' => false,
-            ];
+            $config = $this->getAmazonClientConfig($dsn, $dsn_user, $dsn_password, $dsn_region);
 
             if ($handler) {
                 $config['handler'] = $handler;
@@ -243,6 +251,31 @@ class AmazonSesTransportFactory extends AbstractTransportFactory
         }
 
         return $this->amazonClients[$dsn_region];
+    }
+
+    protected function getAmazonClientConfig(Dsn $dsn, string $dsn_user = '', string $dsn_password = '', string $dsn_region = ''): array
+    {
+        $connectTimeout = $dsn->getOption('connect_timeout') ?? self::DEFAULT_CONNECT_TIMEOUT;
+        $timeout = $dsn->getOption('timeout') ?? self::DEFAULT_TIMEOUT;
+
+        if (!is_numeric($connectTimeout)) {
+            throw new InvalidArgumentException($this->translator->trans('mautic.amazonses.plugin.connect_timeout.invalid', [], 'validators'));
+        }
+
+        if (!is_numeric($timeout)) {
+            throw new InvalidArgumentException($this->translator->trans('mautic.amazonses.plugin.timeout.invalid', [], 'validators'));
+        }
+
+        return [
+            'version'     => 'latest',
+            'credentials' => CredentialProvider::fromCredentials(new Credentials($dsn_user, $dsn_password)),
+            'region'      => $dsn_region ?: $dsn->getOption('region'),
+            'use_aws_shared_config_files' => false,
+            'http' => [
+                'connect_timeout' => (float)$connectTimeout,
+                'timeout' => (float)$timeout,
+            ],
+        ];
     }
 
     /**
