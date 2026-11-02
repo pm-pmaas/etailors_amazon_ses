@@ -9,6 +9,7 @@ use Mautic\EmailBundle\Mailer\Message\MauticMessage;
 use Mautic\LeadBundle\Entity\Lead;
 use MauticPlugin\AmazonSesBundle\Mailer\Transport\AmazonSesTransport;
 use PHPUnit\Framework\TestCase;
+use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 use Symfony\Component\Mailer\Envelope;
 use Symfony\Component\Mailer\Exception\TransportException;
@@ -62,6 +63,27 @@ class AmazonSesTransportTest extends TestCase
         $this->expectExceptionMessage('Unable to open SES rate limit token bucket file');
 
         $method->invoke($transport, __DIR__, 1, 1);
+    }
+
+    public function testTotalBatchFailureIsRetriedByMessenger(): void
+    {
+        $transport = $this->createTransportWithLogger(new NullLogger());
+
+        $this->expectException(TransportException::class);
+        $this->expectExceptionMessage('SES rejected all 2 recipients of this batch after inline retry.');
+
+        $this->invokeProcessFailures($transport, ['first@example.com', 'second@example.com'], 2);
+    }
+
+    public function testPartialBatchFailureIsLoggedWithoutRetryingAcceptedRecipients(): void
+    {
+        $logger = $this->createMock(LoggerInterface::class);
+        $logger->expects($this->once())
+            ->method('error')
+            ->with('1 of 2 recipients failed after inline retry: failed@example.com');
+        $transport = $this->createTransportWithLogger($logger);
+
+        $this->invokeProcessFailures($transport, ['failed@example.com'], 2);
     }
 
     public function testSetFromResolvesContactFieldTokens(): void
@@ -264,6 +286,24 @@ class AmazonSesTransportTest extends TestCase
         ));
 
         return $transport;
+    }
+
+    private function createTransportWithLogger(LoggerInterface $logger): AmazonSesTransport
+    {
+        $reflection = new \ReflectionClass(AmazonSesTransport::class);
+        $transport = $reflection->newInstanceWithoutConstructor();
+        $reflection->getProperty('logger')->setValue($transport, $logger);
+
+        return $transport;
+    }
+
+    /**
+     * @param string[] $failures
+     */
+    private function invokeProcessFailures(AmazonSesTransport $transport, array $failures, int $attempted): void
+    {
+        $method = new \ReflectionMethod(AmazonSesTransport::class, 'processFailures');
+        $method->invoke($transport, $failures, $attempted);
     }
 
     private function createTransportWithEnvelopeAndEmailEntity(MauticEmail $emailEntity, ?Lead $lead = null, array $leadFieldValues = []): AmazonSesTransport
