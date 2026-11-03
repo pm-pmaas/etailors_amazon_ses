@@ -21,7 +21,7 @@ class ConfigSubscriberTest extends TestCase
         );
     }
 
-    public function testAddsAmazonSesConfigurationFormFromPluginConfig(): void
+    public function testAddsAmazonSesConfigurationFormFromRealPluginConfig(): void
     {
         $event = new ConfigBuilderEvent($this->createBundleHelper());
 
@@ -33,22 +33,20 @@ class ConfigSubscriberTest extends TestCase
         $this->assertSame(ConfigType::class, $forms['amazonsesconfig']['formType']);
         $this->assertSame('@AmazonSes/FormTheme/Config/_config_amazonsesconfig_widget.html.twig', $forms['amazonsesconfig']['formTheme']);
         $this->assertSame(
-            ['amazon_ses_sns_topic_arns' => 'arn:aws:sns:eu-west-1:123456789012:mautic-ses'],
+            ['amazon_ses_sns_topic_arns' => ''],
             $forms['amazonsesconfig']['parameters']
         );
     }
 
     private function createBundleHelper(): BundleHelper
     {
+        $config = require dirname(__DIR__, 3).'/Config/config.php';
+
         return new BundleHelper(
             [],
             [
                 'AmazonSesBundle' => [
-                    'config' => [
-                        'parameters' => [
-                            'amazon_ses_sns_topic_arns' => 'arn:aws:sns:eu-west-1:123456789012:mautic-ses',
-                        ],
-                    ],
+                    'config' => $config,
                 ],
             ]
         );
