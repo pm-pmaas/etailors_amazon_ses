@@ -29,6 +29,7 @@ use Symfony\Component\Mailer\SentMessage;
 use Symfony\Component\Mailer\Transport\AbstractTransport;
 use Symfony\Component\Mime\Address;
 use Symfony\Component\Mime\Email;
+use Symfony\Component\Mime\Header\MailboxListHeader;
 use Mautic\EmailBundle\Entity\Email as MauticEmailEntity;
 use Mautic\LeadBundle\Entity\Lead;
 use Doctrine\ORM\EntityManagerInterface;
@@ -86,6 +87,8 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
        'CC',
        'BCC',
     ];
+
+    private const SES_MAX_ADDRESS_LENGTH = 320;
 
     private $enableTemplate;
     private $entityManager;
@@ -293,6 +296,7 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
             $this->logger->debug('No metadata found, sending email as raw');
             // Update From Address dynamically
             $this->updateEmailFields($sentMessage);
+            $this->dropUnsafeDisplayNames($sentMessage);
 
             $this->addSesHeaders($payload, $sentMessage, []);
             $payload = [
@@ -330,6 +334,7 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
 
                 // Update From Address dynamically
                 $this->updateEmailFields($sentMessage, $mailData);
+                $this->dropUnsafeDisplayNames($sentMessage);
                 $this->addSesHeaders($payload, $sentMessage, $mailData);
                 $payload['Destination'] = [
                     'ToAddresses'  => $this->stringifyAddresses($sentMessage->getTo()),
@@ -345,6 +350,55 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
                 $payload = [];
             }
         }
+    }
+
+    /**
+     * Removes the display names SES would reject from the To, Cc and Bcc recipients.
+     *
+     * @param MauticMessage $message the message to be sent
+     *
+     * @return void
+     */
+    private function dropUnsafeDisplayNames(MauticMessage $message): void
+    {
+        $safe = fn (array $addresses): array => array_map($this->sesSafeAddress(...), $addresses);
+
+        if ($message->getTo() !== ($to = $safe($message->getTo()))) {
+            $message->to(...$to);
+        }
+
+        if ($message->getCc() !== ($cc = $safe($message->getCc()))) {
+            $message->cc(...$cc);
+        }
+
+        if ($message->getBcc() !== ($bcc = $safe($message->getBcc()))) {
+            $message->bcc(...$bcc);
+        }
+    }
+
+    /**
+     * Returns the address without its display name when SES would reject it.
+     *
+     * @param Address $address the recipient address
+     *
+     * @return Address the address SES accepts
+     */
+    private function sesSafeAddress(Address $address): Address
+    {
+        $name = $address->getName();
+
+        if ('' === $name) {
+            return $address;
+        }
+
+        if (str_contains($name, '\\')
+            || strlen($address->toString()) > self::SES_MAX_ADDRESS_LENGTH
+            || strlen((new MailboxListHeader('To', [$address]))->getBodyAsString()) > self::SES_MAX_ADDRESS_LENGTH
+        ) {
+            return new Address($address->getAddress());
+        }
+
+        return $address;
     }
 
     /**

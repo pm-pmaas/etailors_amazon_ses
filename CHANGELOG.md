@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
+## [Unreleased]
+### Fixed
+- Fixed SES rejecting recipients with a long display name or a backslash in it, which Mautic counted as sent.
+
 ## [1.0.45] - 2026-10-30
 ### Added
 - Added protected Amazon SES transport extension points for creating the transport and accessing the current message and envelope.
