@@ -9,6 +9,7 @@ use Mautic\EmailBundle\Mailer\Message\MauticMessage;
 use Mautic\LeadBundle\Entity\Lead;
 use MauticPlugin\AmazonSesBundle\Mailer\Transport\AmazonSesTransport;
 use PHPUnit\Framework\TestCase;
+use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 use Symfony\Component\Mailer\Envelope;
 use Symfony\Component\Mailer\Exception\TransportException;
@@ -62,6 +63,36 @@ class AmazonSesTransportTest extends TestCase
         $this->expectExceptionMessage('Unable to open SES rate limit token bucket file');
 
         $method->invoke($transport, __DIR__, 1, 1);
+    }
+
+    public function testTotalBatchFailureIsRetriedByMessenger(): void
+    {
+        $transport = $this->createTransportWithLogger(new NullLogger());
+
+        $this->expectException(TransportException::class);
+        $this->expectExceptionMessage('SES rejected all 2 recipients of this batch after inline retry.');
+
+        $this->invokeProcessFailures($transport, ['first@example.com', 'second@example.com'], 2);
+    }
+
+    public function testPartialBatchFailureIsLoggedWithoutRetryingAcceptedRecipients(): void
+    {
+        $logger = new class extends NullLogger {
+            /** @var array<int, array{level: mixed, message: string}> */
+            public array $records = [];
+
+            public function log($level, string|\Stringable $message, array $context = []): void
+            {
+                $this->records[] = ['level' => $level, 'message' => (string) $message];
+            }
+        };
+        $transport = $this->createTransportWithLogger($logger);
+
+        $this->invokeProcessFailures($transport, ['failed@example.com'], 2);
+
+        $this->assertSame([
+            ['level' => 'error', 'message' => '1 of 2 recipients failed after inline retry: failed@example.com'],
+        ], $logger->records);
     }
 
     public function testSetFromResolvesContactFieldTokens(): void
@@ -252,6 +283,152 @@ class AmazonSesTransportTest extends TestCase
         $this->assertSame('Database Sender', $message->getSender()?->getName());
     }
 
+    /**
+     * Tests that a display name SES accepts is kept.
+     *
+     * @return void
+     */
+    public function testKeepsDisplayNameThatSesAccepts(): void
+    {
+        $payloads = $this->convertToPayloads($this->tokenizedMessage('reader@example.com', 'Ana María López'));
+
+        $this->assertSame(['"Ana María López" <reader@example.com>'], $payloads[0]['Destination']['ToAddresses']);
+        $this->assertStringContainsString('?= <reader@example.com>', $payloads[0]['Content']['Raw']['Data']);
+    }
+
+    /**
+     * Tests that a name too long once encoded in the To header is dropped.
+     *
+     * @return void
+     */
+    public function testDropsDisplayNameWhenEncodedToHeaderIsTooLong(): void
+    {
+        $name = trim(str_repeat('Анастасия ', 8));
+
+        $payloads = $this->convertToPayloads($this->tokenizedMessage('reader@example.com', $name));
+
+        $this->assertSame(['reader@example.com'], $payloads[0]['Destination']['ToAddresses']);
+        $this->assertStringContainsString("To: reader@example.com\r\n", $payloads[0]['Content']['Raw']['Data']);
+    }
+
+    /**
+     * Tests that a name too long once quoted in the Destination is dropped.
+     *
+     * @return void
+     */
+    public function testDropsDisplayNameWhenQuotedDestinationIsTooLong(): void
+    {
+        $payloads = $this->convertToPayloads($this->tokenizedMessage('r@example.com', str_repeat('a', 304)));
+
+        $this->assertSame(['r@example.com'], $payloads[0]['Destination']['ToAddresses']);
+    }
+
+    /**
+     * Tests that a name exactly at the length limit is kept.
+     *
+     * @return void
+     */
+    public function testKeepsDisplayNameAtTheLengthLimit(): void
+    {
+        $name = str_repeat('a', 302);
+
+        $payloads = $this->convertToPayloads($this->tokenizedMessage('r@example.com', $name));
+
+        $this->assertSame(['"'.$name.'" <r@example.com>'], $payloads[0]['Destination']['ToAddresses']);
+    }
+
+    /**
+     * Tests that a name with a backslash is dropped.
+     *
+     * @return void
+     */
+    public function testDropsDisplayNameWithBackslash(): void
+    {
+        $payloads = $this->convertToPayloads($this->tokenizedMessage('reader@example.com', 'Reader Name\\'));
+
+        $this->assertSame(['reader@example.com'], $payloads[0]['Destination']['ToAddresses']);
+        $this->assertStringContainsString("To: reader@example.com\r\n", $payloads[0]['Content']['Raw']['Data']);
+    }
+
+    /**
+     * Tests that a message without metadata drops unsafe names and keeps safe ones.
+     *
+     * @return void
+     */
+    public function testDropsUnsafeDisplayNamesFromMessageWithoutMetadata(): void
+    {
+        $message = (new MauticMessage())
+            ->from('sender@example.com')
+            ->to(new Address('reader@example.com', 'Reader Name\\'))
+            ->cc(new Address('copy@example.com', 'Copy Reader'))
+            ->text('Test');
+
+        $payloads = $this->convertToPayloads($message);
+
+        $this->assertSame(['reader@example.com'], $payloads[0]['Destination']['ToAddresses']);
+        $this->assertSame(['"Copy Reader" <copy@example.com>'], $payloads[0]['Destination']['CcAddresses']);
+    }
+
+    /**
+     * Tests that a message without metadata keeps SES headers in the payload.
+     *
+     * @return void
+     */
+    public function testMessageWithoutMetadataKeepsSesHeadersInPayload(): void
+    {
+        $message = (new MauticMessage())
+            ->from('sender@example.com')
+            ->replyTo('reply@example.com')
+            ->to('reader@example.com')
+            ->text('Test');
+        $message->getHeaders()->addTextHeader('X-SES-CONFIGURATION-SET', 'event-set');
+
+        $payloads = $this->convertToPayloads($message);
+
+        $this->assertTrue(
+            array_key_exists('ConfigurationSetName', $payloads[0]),
+            'No-metadata payload should keep the SES configuration set header.'
+        );
+        $this->assertSame('event-set', $payloads[0]['ConfigurationSetName']);
+        $this->assertSame(['reply@example.com'], $payloads[0]['ReplyToAddresses']);
+    }
+
+    /**
+     * Builds a tokenized message with one recipient.
+     *
+     * @param string $recipient the recipient address
+     * @param string $name      the recipient display name
+     *
+     * @return MauticMessage the message with the recipient metadata
+     */
+    private function tokenizedMessage(string $recipient, string $name): MauticMessage
+    {
+        $message = (new MauticMessage())
+            ->from('sender@example.com')
+            ->to($recipient)
+            ->text('Test');
+        $message->addMetadata($recipient, ['name' => $name, 'hashId' => 'hash', 'tokens' => []]);
+
+        return $message;
+    }
+
+    /**
+     * Converts a message into the SES payloads the transport sends.
+     *
+     * @param MauticMessage $message the message to convert
+     *
+     * @return array<int, array<string, mixed>> the SES payloads
+     */
+    private function convertToPayloads(MauticMessage $message): array
+    {
+        $reflection = new \ReflectionClass(AmazonSesTransport::class);
+        $transport  = $reflection->newInstanceWithoutConstructor();
+        $reflection->getProperty('message')->setValue($transport, $message);
+        $reflection->getProperty('logger')->setValue($transport, new NullLogger());
+
+        return iterator_to_array($transport->convertMessageToRawPayload(), false);
+    }
+
     private function createTransportWithEnvelope(): AmazonSesTransport
     {
         $reflection = new \ReflectionClass(AmazonSesTransport::class);
@@ -264,6 +441,24 @@ class AmazonSesTransportTest extends TestCase
         ));
 
         return $transport;
+    }
+
+    private function createTransportWithLogger(LoggerInterface $logger): AmazonSesTransport
+    {
+        $reflection = new \ReflectionClass(AmazonSesTransport::class);
+        $transport = $reflection->newInstanceWithoutConstructor();
+        $reflection->getProperty('logger')->setValue($transport, $logger);
+
+        return $transport;
+    }
+
+    /**
+     * @param string[] $failures
+     */
+    private function invokeProcessFailures(AmazonSesTransport $transport, array $failures, int $attempted): void
+    {
+        $method = new \ReflectionMethod(AmazonSesTransport::class, 'processFailures');
+        $method->invoke($transport, $failures, $attempted);
     }
 
     private function createTransportWithEnvelopeAndEmailEntity(MauticEmail $emailEntity, ?Lead $lead = null, array $leadFieldValues = []): AmazonSesTransport

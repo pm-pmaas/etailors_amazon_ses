@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace MauticPlugin\AmazonSesBundle\Tests\Unit\Helper;
 
 use MauticPlugin\AmazonSesBundle\Helper\MauticEmailId;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 class MauticEmailIdTest extends TestCase
@@ -65,12 +66,13 @@ class MauticEmailIdTest extends TestCase
     /**
      * @dataProvider provideInvalidPayloads
      */
+    #[DataProvider('provideInvalidPayloads')]
     public function testRejectsMissingOrInvalidEmailId(array $payload): void
     {
         $this->assertNull(MauticEmailId::fromSesNotification($payload));
     }
 
-    public function provideInvalidPayloads(): array
+    public static function provideInvalidPayloads(): array
     {
         return [
             'missing mail object' => [[]],

@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
+## [Unreleased]
+
+## [1.0.46] - 2026-11-15
+### Fixed
+- Fixed SES recipient rejection handling so complete batch failures are retried while partial failures do not resend accepted recipients.
+- Added the missing default for the Amazon SNS topic ARN System Setting so opening Mautic's configuration does not trigger an undefined array key warning.
+- Fixed SES rejecting recipients with a long display name or a backslash in it, which Mautic counted as sent.
+- Fixed no-metadata SES sends losing payload headers such as `ConfigurationSetName` and `ReplyToAddresses` after `addSesHeaders()` prepared them.
+
 ## [1.0.45] - 2026-10-30
 ### Added
 - Added protected Amazon SES transport extension points for creating the transport and accessing the current message and envelope.
