@@ -154,7 +154,8 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
             $this->message = $email;
             $this->envelope = $message->getEnvelope();
 
-            $failures = [];
+            $failures  = [];
+            $attempted = 0;
 
             // Handle attachment or non-template emails
             if ($email->getAttachments() || !$this->enableTemplate) {
@@ -165,6 +166,7 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
                 foreach ($this->convertMessageToRawPayload() as $payload) {
                     $commands[] = $this->client->getCommand('sendEmail', $payload);
                 }
+                $attempted = count($commands);
 
                 // Send in micro-batches with shared token bucket for cross-worker rate limiting.
                 // Lock held only ~30µs (file read/write), NOT during API call.
@@ -186,7 +188,7 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
                         'concurrency' => count($batchCommands),
                         'fulfilled' => function (Result $result, $iteratorId) {
                         },
-                        'rejected' => function (AwsException $reason, $iteratorId) use ($batchCommands, &$batchFailures) {
+                        'rejected' => function (\Throwable $reason, $iteratorId) use ($batchCommands, &$batchFailures) {
                             $batchFailures[] = $batchCommands[$iteratorId];
                             $data = $batchCommands[$iteratorId]->toArray();
                             $this->logger->error('Rejected: message to '.implode(',', $data['Destination']['ToAddresses']));
@@ -215,13 +217,13 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
                                 'concurrency' => count($retryCommands),
                                 'fulfilled' => function (Result $result, $iteratorId) {
                                 },
-                                'rejected' => function (AwsException $reason, $iteratorId) use ($retryCommands, &$batchFailures) {
+                                'rejected' => function (\Throwable $reason, $iteratorId) use ($retryCommands, &$batchFailures) {
                                     $batchFailures[] = $retryCommands[$iteratorId];
                                     $data = $retryCommands[$iteratorId]->toArray();
                                     $this->logger->error(sprintf(
                                         'Retry rejected: %s — %s',
                                         $data['Destination']['ToAddresses'][0],
-                                        $reason->getAwsErrorMessage() ?: $reason->getMessage()
+                                        ($reason instanceof AwsException ? $reason->getAwsErrorMessage() : null) ?: $reason->getMessage()
                                     ));
                                 },
                             ]);
@@ -251,7 +253,7 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
                 }
             }
 
-            $this->processFailures($failures);
+            $this->processFailures($failures, $attempted);
         } catch (SesException $exception) {
             $message = $exception->getAwsErrorMessage() ?: $exception->getMessage();
             $code = $exception->getStatusCode() ?: $exception->getCode();
@@ -408,19 +410,27 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
     /**
      * @param array<string|int, mixed> $failures
      */
-    private function processFailures(array $failures): void
+    private function processFailures(array $failures, int $attempted = 0): void
     {
         if (empty($failures)) {
             return;
         }
 
-        // Log failures but do NOT throw. Throwing causes Symfony Messenger to retry
-        // the ENTIRE message with ALL recipients (metadata modifications are lost during
-        // re-serialization), resulting in duplicate sends. Failed recipients were already
-        // retried inline in doSend() with exponential backoff.
+        // A total failure cannot duplicate a successful delivery, so surface it
+        // to Messenger for retry instead of silently losing the whole batch.
+        if ($attempted > 0 && count($failures) >= $attempted) {
+            throw new TransportException(sprintf(
+                'SES rejected all %d recipients of this batch after inline retry.',
+                count($failures)
+            ));
+        }
+
+        // Partial failure must not retry the complete envelope because that would
+        // resend every recipient that SES already accepted.
         $this->logger->error(sprintf(
-            '%d recipients failed after inline retry: %s',
+            '%d of %d recipients failed after inline retry: %s',
             count($failures),
+            $attempted,
             implode(', ', $failures)
         ));
     }
