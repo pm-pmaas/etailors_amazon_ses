@@ -301,17 +301,15 @@ class AmazonSesTransport extends AbstractTransport implements TokenTransportInte
             $this->dropUnsafeDisplayNames($sentMessage);
 
             $this->addSesHeaders($payload, $sentMessage, []);
-            $payload = [
-                'Content' => [
-                    'Raw' => [
-                        'Data' => $sentMessage->toString(),
-                    ],
+            $payload['Content'] = [
+                'Raw' => [
+                    'Data' => $sentMessage->toString(),
                 ],
-                'Destination' => [
-                    'ToAddresses'  => $this->stringifyAddresses($sentMessage->getTo()),
-                    'CcAddresses'  => $this->stringifyAddresses($sentMessage->getCc()),
-                    'BccAddresses' => $this->stringifyAddresses($sentMessage->getBcc()),
-                ],
+            ];
+            $payload['Destination'] = [
+                'ToAddresses'  => $this->stringifyAddresses($sentMessage->getTo()),
+                'CcAddresses'  => $this->stringifyAddresses($sentMessage->getCc()),
+                'BccAddresses' => $this->stringifyAddresses($sentMessage->getBcc()),
             ];
             yield $payload;
             $payload = [];

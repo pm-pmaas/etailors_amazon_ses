@@ -77,13 +77,22 @@ class AmazonSesTransportTest extends TestCase
 
     public function testPartialBatchFailureIsLoggedWithoutRetryingAcceptedRecipients(): void
     {
-        $logger = $this->createMock(LoggerInterface::class);
-        $logger->expects($this->once())
-            ->method('error')
-            ->with('1 of 2 recipients failed after inline retry: failed@example.com');
+        $logger = new class extends NullLogger {
+            /** @var array<int, array{level: mixed, message: string}> */
+            public array $records = [];
+
+            public function log($level, string|\Stringable $message, array $context = []): void
+            {
+                $this->records[] = ['level' => $level, 'message' => (string) $message];
+            }
+        };
         $transport = $this->createTransportWithLogger($logger);
 
         $this->invokeProcessFailures($transport, ['failed@example.com'], 2);
+
+        $this->assertSame([
+            ['level' => 'error', 'message' => '1 of 2 recipients failed after inline retry: failed@example.com'],
+        ], $logger->records);
     }
 
     public function testSetFromResolvesContactFieldTokens(): void
@@ -358,6 +367,30 @@ class AmazonSesTransportTest extends TestCase
 
         $this->assertSame(['reader@example.com'], $payloads[0]['Destination']['ToAddresses']);
         $this->assertSame(['"Copy Reader" <copy@example.com>'], $payloads[0]['Destination']['CcAddresses']);
+    }
+
+    /**
+     * Tests that a message without metadata keeps SES headers in the payload.
+     *
+     * @return void
+     */
+    public function testMessageWithoutMetadataKeepsSesHeadersInPayload(): void
+    {
+        $message = (new MauticMessage())
+            ->from('sender@example.com')
+            ->replyTo('reply@example.com')
+            ->to('reader@example.com')
+            ->text('Test');
+        $message->getHeaders()->addTextHeader('X-SES-CONFIGURATION-SET', 'event-set');
+
+        $payloads = $this->convertToPayloads($message);
+
+        $this->assertTrue(
+            array_key_exists('ConfigurationSetName', $payloads[0]),
+            'No-metadata payload should keep the SES configuration set header.'
+        );
+        $this->assertSame('event-set', $payloads[0]['ConfigurationSetName']);
+        $this->assertSame(['reply@example.com'], $payloads[0]['ReplyToAddresses']);
     }
 
     /**

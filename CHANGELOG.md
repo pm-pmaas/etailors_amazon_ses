@@ -5,17 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
 ## [Unreleased]
-### Fixed
-- Added the missing default for the Amazon SNS topic ARN System Setting so opening Mautic's configuration does not trigger an undefined array key warning.
-- Fixed SES rejecting recipients with a long display name or a backslash in it, which Mautic counted as sent.
 
-## [1.0.45] - 2026-10-30
+## [1.0.45] - 2026-11-15
 ### Added
 - Added protected Amazon SES transport extension points for creating the transport and accessing the current message and envelope.
 - Added PHPUnit 10 data provider attribute support for the Amazon SES transport factory password provider while keeping the PHPUnit 9 data provider annotation.
 
 ### Fixed
 - Fixed stalled SES requests from blocking Messenger workers indefinitely by configuring explicit HTTP timeouts on the AWS SES client, with `connect_timeout` and `timeout` DSN options for overrides.
+- Added the missing default for the Amazon SNS topic ARN System Setting so opening Mautic's configuration does not trigger an undefined array key warning.
+- Fixed SES rejecting recipients with a long display name or a backslash in it, which Mautic counted as sent.
+- Fixed no-metadata SES sends losing payload headers such as `ConfigurationSetName` and `ReplyToAddresses` after `addSesHeaders()` prepared them.
 
 ## [1.0.44] - 2026-10-25
 ### Fixed
