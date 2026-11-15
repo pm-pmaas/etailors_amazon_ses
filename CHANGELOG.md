@@ -7,6 +7,7 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 ## [Unreleased]
 ### Fixed
 - Added the missing default for the Amazon SNS topic ARN System Setting so opening Mautic's configuration does not trigger an undefined array key warning.
+- Fixed SES rejecting recipients with a long display name or a backslash in it, which Mautic counted as sent.
 
 ## [1.0.45] - 2026-10-30
 ### Added
