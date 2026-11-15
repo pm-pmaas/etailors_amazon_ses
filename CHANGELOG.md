@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
+## [Unreleased]
+### Fixed
+- Added the missing default for the Amazon SNS topic ARN System Setting so opening Mautic's configuration does not trigger an undefined array key warning.
+
 ## [1.0.45] - 2026-10-30
 ### Added
 - Added protected Amazon SES transport extension points for creating the transport and accessing the current message and envelope.
